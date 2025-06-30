@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/rabbitmq/amqp091-go"
 	"slices"
+	"time"
 )
 
 type Wrapbit struct {
@@ -16,7 +17,9 @@ type Wrapbit struct {
 }
 
 type WrapbitConfig struct {
-	clusterURIs []string
+	clusterURIs            []string
+	connectionRetries      int
+	connectionRetryTimeout time.Duration
 }
 
 type WrapbitOption func(w *Wrapbit) error
@@ -39,6 +42,29 @@ func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 func wrapbitDefaultConfig() WrapbitConfig {
 	return WrapbitConfig{
 		clusterURIs: nil,
+	}
+}
+
+// WithConnectionRetries sets number failed connection attempts in case of error before stop attempts
+func WithConnectionRetries(n int) WrapbitOption {
+	return func(w *Wrapbit) error {
+		w.config.connectionRetries = n
+
+		return nil
+	}
+}
+
+// WithConnectionRetryTimeout sets time spent between attempts failed connection attempts. Non-positive time.Duration
+// means no timeout.
+func WithConnectionRetryTimeout(t time.Duration) WrapbitOption {
+	return func(w *Wrapbit) error {
+		if t.Nanoseconds() < 0 {
+			t = 0
+		}
+
+		w.config.connectionRetryTimeout = t
+
+		return nil
 	}
 }
 
@@ -75,29 +101,8 @@ func WithQueue(name string, options ...QueueOption) WrapbitOption {
 }
 
 func (w *Wrapbit) Start() error {
-	connErrs := make([]error, len(w.config.clusterURIs))
-	for _, uri := range w.config.clusterURIs {
-		conn, err := amqp091.Dial(uri)
-		if err != nil {
-			connErrs = append(connErrs, err)
-
-			continue
-		}
-
-		w.connection = conn
-
-		break
-	}
-
-	if w.connection == nil {
-		var err error
-		if len(w.config.clusterURIs) == 0 {
-			err = errors.New("no uris to connect")
-		} else {
-			err = errors.Join(connErrs...)
-		}
-
-		return fmt.Errorf("establish connection: %w", err)
+	if err := w.connect(); err != nil {
+		return err
 	}
 
 	ch, err := w.connection.Channel()
@@ -165,4 +170,51 @@ func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consume
 	}
 
 	return c, nil
+}
+
+func (w *Wrapbit) connect() error {
+	var connErrs []error
+
+connection:
+	for range w.config.connectionRetries {
+		for _, uri := range w.config.clusterURIs {
+			conn, err := amqp091.Dial(uri)
+			if err != nil {
+				connErrs = append(connErrs, err)
+
+				continue
+			}
+
+			w.connection = conn
+
+			break connection
+		}
+
+		if w.config.connectionRetryTimeout.Nanoseconds() > 0 {
+			time.Sleep(w.config.connectionRetryTimeout)
+		}
+	}
+
+	if w.connection == nil {
+		var err error
+		if len(w.config.clusterURIs) == 0 {
+			err = errors.New("no URIs to connect")
+		} else {
+			err = errors.Join(connErrs...)
+		}
+
+		return fmt.Errorf("establish connection: %w", err)
+	}
+
+	var connCloseChan <-chan *amqp091.Error = w.connection.NotifyClose(make(chan *amqp091.Error, 1))
+
+	go func() {
+		// TODO: This will run once on non graceful connection close. If w.connect() fails and returns error, it will
+		// not be known and everything will hang forever (until manual w.Start()). So this should be handled properly.
+		if err := <-connCloseChan; err != nil {
+			_ = w.connect()
+		}
+	}()
+
+	return nil
 }

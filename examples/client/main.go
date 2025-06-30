@@ -23,6 +23,8 @@ func main() {
 	wrapbitInstance, err := wrapbit.NewInstance(
 		wrapbit.WithNode("amqp://guest:guest@localhost:5673"),
 		wrapbit.WithQueue("test_queue"),
+		wrapbit.WithConnectionRetries(10),
+		wrapbit.WithConnectionRetryTimeout(100*time.Millisecond),
 	)
 	if err != nil {
 		fatal(err)
