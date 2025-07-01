@@ -50,6 +50,29 @@ func wrapbitDefaultConfig() WrapbitConfig {
 	}
 }
 
+// WithChannelRetries sets number of failed channel opening attempts in case of error before stop attempts
+func WithChannelRetries(n int) WrapbitOption {
+	return func(w *Wrapbit) error {
+		w.config.channelRetries = n
+
+		return nil
+	}
+}
+
+// WithChannelRetryTimeout sets timeout between failed channel opening attempts. Non-positive time.Duration means no
+// timeout.
+func WithChannelRetryTimeout(t time.Duration) WrapbitOption {
+	return func(w *Wrapbit) error {
+		if t.Nanoseconds() < 0 {
+			t = 0
+		}
+
+		w.config.channelRetryTimeout = t
+
+		return nil
+	}
+}
+
 // WithConnectionRetries sets number failed connection attempts in case of error before stop attempts
 func WithConnectionRetries(n int) WrapbitOption {
 	return func(w *Wrapbit) error {
@@ -59,8 +82,8 @@ func WithConnectionRetries(n int) WrapbitOption {
 	}
 }
 
-// WithConnectionRetryTimeout sets time spent between attempts failed connection attempts. Non-positive time.Duration
-// means no timeout.
+// WithConnectionRetryTimeout sets timeout between failed connection attempts. Non-positive time.Duration means no
+// timeout.
 func WithConnectionRetryTimeout(t time.Duration) WrapbitOption {
 	return func(w *Wrapbit) error {
 		if t.Nanoseconds() < 0 {
