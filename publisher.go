@@ -39,7 +39,7 @@ func WithRoutingKey(routingKey string) PublisherOption {
 }
 
 func (p *Publisher) Start() error {
-	ch, err := p.wrapbit.connection.Channel()
+	ch, err := p.wrapbit.newChannel()
 	if err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}

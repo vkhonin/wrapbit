@@ -5,19 +5,23 @@ import (
 	"fmt"
 	"github.com/rabbitmq/amqp091-go"
 	"slices"
+	"sync"
 	"time"
 )
 
 type Wrapbit struct {
-	channel    *amqp091.Channel
-	config     WrapbitConfig
-	connection *amqp091.Connection
-	publishers map[string]*Publisher
-	queues     map[string]*Queue
+	channel      *amqp091.Channel
+	config       WrapbitConfig
+	connectionMu *sync.RWMutex
+	connection   *amqp091.Connection
+	publishers   map[string]*Publisher
+	queues       map[string]*Queue
 }
 
 type WrapbitConfig struct {
 	clusterURIs            []string
+	channelRetries         int
+	channelRetryTimeout    time.Duration
 	connectionRetries      int
 	connectionRetryTimeout time.Duration
 }
@@ -27,6 +31,7 @@ type WrapbitOption func(w *Wrapbit) error
 func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 	w := new(Wrapbit)
 	w.config = wrapbitDefaultConfig()
+	w.connectionMu = &sync.RWMutex{}
 	w.publishers = make(map[string]*Publisher)
 	w.queues = make(map[string]*Queue)
 
@@ -105,7 +110,7 @@ func (w *Wrapbit) Start() error {
 		return err
 	}
 
-	ch, err := w.connection.Channel()
+	ch, err := w.newChannel()
 	if err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
@@ -130,6 +135,9 @@ func (w *Wrapbit) Start() error {
 }
 
 func (w *Wrapbit) Stop() error {
+	w.connectionMu.RLock()
+	defer w.connectionMu.RUnlock()
+
 	if err := w.connection.Close(); err != nil {
 		return fmt.Errorf("close connection: %w", err)
 	}
@@ -173,6 +181,9 @@ func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consume
 }
 
 func (w *Wrapbit) connect() error {
+	w.connectionMu.Lock()
+	defer w.connectionMu.Unlock()
+
 	var connErrs []error
 
 connection:
@@ -217,4 +228,38 @@ connection:
 	}()
 
 	return nil
+}
+
+func (w *Wrapbit) newChannel() (*amqp091.Channel, error) {
+	var (
+		channel     *amqp091.Channel
+		channelErrs []error
+	)
+
+	for range w.config.connectionRetries {
+		var err error
+
+		// If connection is closed, both connection and it's channels receive NotifyClose. For channel's close
+		// notification chan there is no way to distinguish whether connection or channel was closed. So there's a
+		// chance that channel will lock mutex earlier than connection will. But due to how RWMutex works, this should
+		// consume at most one retry for each channel, so there is no reason to overengineer here ATM.
+		w.connectionMu.RLock()
+		channel, err = w.connection.Channel()
+		w.connectionMu.RUnlock()
+		if err == nil {
+			break
+		}
+
+		channelErrs = append(channelErrs, err)
+
+		if w.config.channelRetryTimeout.Nanoseconds() > 0 {
+			time.Sleep(w.config.channelRetryTimeout)
+		}
+	}
+
+	if channel == nil {
+		return nil, fmt.Errorf("establish channel: %w", errors.Join(channelErrs...))
+	}
+
+	return channel, nil
 }

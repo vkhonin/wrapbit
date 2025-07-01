@@ -40,7 +40,7 @@ type Delivery struct {
 type Response uint8
 
 func (c *Consumer) Start(handler Handler) error {
-	ch, err := c.wrapbit.connection.Channel()
+	ch, err := c.wrapbit.newChannel()
 	if err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
