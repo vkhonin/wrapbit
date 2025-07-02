@@ -10,12 +10,14 @@ import (
 )
 
 type Wrapbit struct {
-	channel      *amqp091.Channel
-	config       WrapbitConfig
-	connectionMu *sync.RWMutex
-	connection   *amqp091.Connection
-	publishers   map[string]*Publisher
-	queues       map[string]*Queue
+	channel       *amqp091.Channel
+	config        WrapbitConfig
+	connectionMu  *sync.RWMutex
+	connection    *amqp091.Connection
+	exchanges     map[string]*Exchange
+	publishers    map[string]*Publisher
+	queueBindings map[string]*QueueBinding
+	queues        map[string]*Queue
 }
 
 type WrapbitConfig struct {
@@ -32,7 +34,9 @@ func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 	w := new(Wrapbit)
 	w.config = wrapbitDefaultConfig()
 	w.connectionMu = &sync.RWMutex{}
+	w.exchanges = make(map[string]*Exchange)
 	w.publishers = make(map[string]*Publisher)
+	w.queueBindings = make(map[string]*QueueBinding)
 	w.queues = make(map[string]*Queue)
 
 	for _, option := range options {
@@ -47,6 +51,28 @@ func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 func wrapbitDefaultConfig() WrapbitConfig {
 	return WrapbitConfig{
 		clusterURIs: nil,
+	}
+}
+
+// WithQueueBinding binds given queue to given exchange
+func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) WrapbitOption {
+	return func(w *Wrapbit) error {
+		b := new(QueueBinding)
+
+		b.config = queueBindingDefaultConfig()
+		b.config.name = queue
+		b.config.exchange = exchange
+
+		for _, option := range options {
+			if err := option(b); err != nil {
+				return fmt.Errorf("apply QueueBinding options: %w", err)
+			}
+		}
+
+		// TODO: This kind of storage should be replaced with something more sensible
+		w.queueBindings[fmt.Sprintf("%s:%s:%s", b.config.exchange, b.config.key, b.config.name)] = b
+
+		return nil
 	}
 }
 
@@ -96,6 +122,26 @@ func WithConnectionRetryTimeout(t time.Duration) WrapbitOption {
 	}
 }
 
+// WithExchange declares given exchange
+func WithExchange(name string, options ...ExchangeOption) WrapbitOption {
+	return func(w *Wrapbit) error {
+		e := new(Exchange)
+
+		e.config = exchangeDefaultConfig()
+		e.config.name = name
+
+		for _, option := range options {
+			if err := option(e); err != nil {
+				return fmt.Errorf("apply Queue options: %w", err)
+			}
+		}
+
+		w.exchanges[name] = e
+
+		return nil
+	}
+}
+
 // WithNode appends given AMQP URI to list of those used to establish connection. If there are multiple URIs in list,
 // they will be handled as cluster.
 func WithNode(newURI string) WrapbitOption {
@@ -122,6 +168,10 @@ func WithQueue(name string, options ...QueueOption) WrapbitOption {
 			}
 		}
 
+		// TODO: As queues can be declared without name (it will be assigned by server on declaration), there will be
+		// conflict below. We need some logic to:
+		// 1. Store nameless queues before actual declaration.
+		// 2. Update their mappings after declaration, when the actual name will be assigned by the server.
 		w.queues[name] = q
 
 		return nil
@@ -141,16 +191,26 @@ func (w *Wrapbit) Start() error {
 	w.channel = ch
 
 	for _, q := range w.queues {
-		_, err = w.channel.QueueDeclare(
-			q.config.name,
-			q.config.durable,
-			q.config.autoDelete,
-			q.config.exclusive,
-			q.config.noWait,
-			q.config.args,
-		)
+		c := &q.config
+		_, err = w.channel.QueueDeclare(c.name, c.durable, c.autoDelete, c.exclusive, c.noWait, c.args)
 		if err != nil {
 			return fmt.Errorf("declare queue: %w", err)
+		}
+	}
+
+	for _, e := range w.exchanges {
+		c := &e.config
+		err = w.channel.ExchangeDeclare(c.name, c.kind, c.durable, c.autoDelete, c.internal, c.noWait, c.args)
+		if err != nil {
+			return fmt.Errorf("declare exchange: %w", err)
+		}
+	}
+
+	for _, b := range w.queueBindings {
+		c := &b.config
+		err = w.channel.QueueBind(c.name, c.key, c.exchange, c.noWait, c.args)
+		if err != nil {
+			return fmt.Errorf("binding queue: %w", err)
 		}
 	}
 

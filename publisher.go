@@ -22,15 +22,24 @@ type PublisherOption func(p *Publisher) error
 
 func publisherDefaultConfig() PublisherConfig {
 	return PublisherConfig{
-		exchange:   "",
+		exchange:   amqp091.DefaultExchange,
 		routingKey: "",
 		mandatory:  false,
 		immediate:  false,
 	}
 }
 
-// WithRoutingKey sets default routing key to be used on Publish
-func WithRoutingKey(routingKey string) PublisherOption {
+// WithPublisherExchange sets default exchange to be used on Publish
+func WithPublisherExchange(exchange string) PublisherOption {
+	return func(p *Publisher) error {
+		p.config.exchange = exchange
+
+		return nil
+	}
+}
+
+// WithPublisherRoutingKey sets default routing key to be used on Publish
+func WithPublisherRoutingKey(routingKey string) PublisherOption {
 	return func(p *Publisher) error {
 		p.config.routingKey = routingKey
 

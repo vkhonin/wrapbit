@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	testQueueName    = "test_queue"
+	testExchangeName = "test_exchange"
+)
+
 type message struct {
 	ID    uint64 `json:"id"`
 	Value string `json:"value"`
@@ -22,7 +27,9 @@ func fatal(err error) {
 func main() {
 	wrapbitInstance, err := wrapbit.NewInstance(
 		wrapbit.WithNode("amqp://guest:guest@localhost:5673"),
-		wrapbit.WithQueue("test_queue"),
+		wrapbit.WithQueue(testQueueName),
+		wrapbit.WithExchange(testExchangeName),
+		wrapbit.WithQueueBinding(testQueueName, testExchangeName),
 		wrapbit.WithConnectionRetries(10),
 		wrapbit.WithConnectionRetryTimeout(100*time.Millisecond),
 	)
@@ -36,7 +43,7 @@ func main() {
 
 	publisherInstance, err := wrapbitInstance.NewPublisher(
 		"test_publisher",
-		wrapbit.WithRoutingKey("test_queue"),
+		wrapbit.WithPublisherExchange(testExchangeName),
 	)
 	if err != nil {
 		fatal(err)
@@ -46,7 +53,7 @@ func main() {
 		fatal(err)
 	}
 
-	consumerInstance, err := wrapbitInstance.NewConsumer("test_queue")
+	consumerInstance, err := wrapbitInstance.NewConsumer(testQueueName)
 	if err != nil {
 		fatal(err)
 	}
