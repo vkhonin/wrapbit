@@ -12,19 +12,23 @@ const (
 )
 
 type Consumer struct {
-	channel *amqp091.Channel
-	config  ConsumerConfig
-	wrapbit *Wrapbit
+	channel         *amqp091.Channel
+	closeChannel    <-chan *amqp091.Error
+	config          ConsumerConfig
+	deliveryChannel <-chan amqp091.Delivery
+	errorChannel    chan error
+	wrapbit         *Wrapbit
 }
 
 type ConsumerConfig struct {
-	args      amqp091.Table
-	autoAck   bool
-	consumer  string
-	exclusive bool
-	noLocal   bool
-	noWait    bool
-	queue     string
+	args          amqp091.Table
+	autoAck       bool
+	autoReconnect bool
+	consumer      string
+	exclusive     bool
+	noLocal       bool
+	noWait        bool
+	queue         string
 }
 
 type ConsumerOption func(p *Consumer) error
@@ -39,6 +43,15 @@ type Delivery struct {
 
 type Response uint8
 
+// WithAutoReconnect enables automatic reconnection on consumer channel error
+func WithAutoReconnect() ConsumerOption {
+	return func(c *Consumer) error {
+		c.config.autoReconnect = true
+
+		return nil
+	}
+}
+
 func (c *Consumer) Start(handler Handler) error {
 	ch, err := c.wrapbit.newChannel()
 	if err != nil {
@@ -47,7 +60,7 @@ func (c *Consumer) Start(handler Handler) error {
 
 	c.channel = ch
 
-	dCh, err := c.channel.Consume(
+	c.deliveryChannel, err = c.channel.Consume(
 		c.config.queue,
 		c.config.consumer,
 		c.config.autoAck,
@@ -60,39 +73,62 @@ func (c *Consumer) Start(handler Handler) error {
 		return fmt.Errorf("start consume: %w", err)
 	}
 
-	for {
+	c.closeChannel = c.channel.NotifyClose(make(chan *amqp091.Error))
+
+	go c.consume(handler)
+
+	return nil
+}
+
+func (c *Consumer) Stop() error {
+	return c.channel.Close()
+}
+
+func (c *Consumer) consume(handler Handler) {
+	for c.deliveryChannel != nil || c.closeChannel != nil {
 		select {
-		case d, ok := <-dCh:
+		case d, ok := <-c.deliveryChannel:
 			if !ok {
-				return nil
+				c.deliveryChannel = nil
+
+				break
 			}
 			dd := Delivery{
 				delivery: &d,
 			}
 			result, err := handler(&dd)
 			if err != nil {
-				return fmt.Errorf("handling Delivery: %w", err)
+				c.wrapbit.logger.Error(fmt.Sprintf("handling Delivery: %w", err))
+
+				break
 			}
 			switch result {
 			case Ack:
 				if err = dd.delivery.Ack(false); err != nil {
-					return fmt.Errorf("ack: %w", err)
+					c.wrapbit.logger.Error(fmt.Sprintf("ack: %w", err))
 				}
 			case NackDiscard:
 				if err = dd.delivery.Nack(false, false); err != nil {
-					return fmt.Errorf("nack discard: %w", err)
+					c.wrapbit.logger.Error(fmt.Sprintf("nack discard: %w", err))
 				}
 			case NackRequeue:
 				if err = dd.delivery.Nack(false, true); err != nil {
-					return fmt.Errorf("nack requeue: %w", err)
+					c.wrapbit.logger.Error(fmt.Sprintf("nack requeue: %w", err))
 				}
 			}
+		case closeErr := <-c.closeChannel:
+			if c.config.autoReconnect && closeErr != nil {
+				// TODO: This could be infinite loop. Some break condition (and probably timeout) required.
+				for {
+					if startErr := c.Start(handler); startErr == nil {
+						break
+					}
+				}
+			}
+
+			return
 		}
 	}
-}
-
-func (c *Consumer) Stop() error {
-	return c.channel.Close()
 }
 
 func (d *Delivery) Body() []byte {

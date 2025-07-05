@@ -53,31 +53,32 @@ func main() {
 		fatal(err)
 	}
 
-	consumerInstance, err := wrapbitInstance.NewConsumer(testQueueName)
+	consumerInstance, err := wrapbitInstance.NewConsumer(
+		testQueueName,
+		wrapbit.WithAutoReconnect(),
+	)
 	if err != nil {
 		fatal(err)
 	}
 
-	go func() {
-		cErr := consumerInstance.Start(func(delivery *wrapbit.Delivery) (wrapbit.Response, error) {
-			var m message
+	cErr := consumerInstance.Start(func(delivery *wrapbit.Delivery) (wrapbit.Response, error) {
+		var m message
 
-			if err = json.Unmarshal(delivery.Body(), &m); err != nil {
-				return wrapbit.NackDiscard, fmt.Errorf("unmarshal: %w", err)
-			}
-
-			if rand.Intn(100) >= 50 {
-				return wrapbit.NackRequeue, nil
-			}
-
-			fmt.Printf("message %d: %s\n", m.ID, m.Value)
-
-			return wrapbit.Ack, nil
-		})
-		if cErr != nil {
-			fatal(cErr)
+		if err = json.Unmarshal(delivery.Body(), &m); err != nil {
+			return wrapbit.NackDiscard, fmt.Errorf("unmarshal: %w", err)
 		}
-	}()
+
+		if rand.Intn(100) >= 50 {
+			return wrapbit.NackRequeue, nil
+		}
+
+		fmt.Printf("message %d: %s\n", m.ID, m.Value)
+
+		return wrapbit.Ack, nil
+	})
+	if cErr != nil {
+		fatal(cErr)
+	}
 
 	for _, msg := range []message{{1, "hello"}, {2, "world"}} {
 		data, _ := json.Marshal(msg)
