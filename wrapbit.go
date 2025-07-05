@@ -1,9 +1,11 @@
 package wrapbit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/rabbitmq/amqp091-go"
+	"log/slog"
 	"slices"
 	"sync"
 	"time"
@@ -15,6 +17,7 @@ type Wrapbit struct {
 	connectionMu  *sync.RWMutex
 	connection    *amqp091.Connection
 	exchanges     map[string]*Exchange
+	logger        Logger
 	publishers    map[string]*Publisher
 	queueBindings map[string]*QueueBinding
 	queues        map[string]*Queue
@@ -30,11 +33,48 @@ type WrapbitConfig struct {
 
 type WrapbitOption func(w *Wrapbit) error
 
+type Logger interface {
+	Debug(args ...any)
+	Error(args ...any)
+	Info(args ...any)
+	Warn(args ...any)
+}
+
+type logger struct{}
+
+func (l *logger) Debug(args ...any) {
+	l.log(context.Background(), slog.LevelDebug, args)
+}
+
+func (l *logger) Error(args ...any) {
+	l.log(context.Background(), slog.LevelError, args)
+}
+
+func (l *logger) Info(args ...any) {
+	l.log(context.Background(), slog.LevelInfo, args)
+}
+
+func (l *logger) Warn(args ...any) {
+	l.log(context.Background(), slog.LevelWarn, args)
+}
+
+func (l *logger) log(ctx context.Context, level slog.Level, args ...any) {
+	switch len(args) {
+	case 0:
+		slog.Log(ctx, level, "")
+	case 1:
+		slog.Log(ctx, level, fmt.Sprint(args[0]))
+	default:
+		slog.Log(ctx, level, fmt.Sprint(args[0]), args[1:])
+	}
+}
+
 func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 	w := new(Wrapbit)
 	w.config = wrapbitDefaultConfig()
 	w.connectionMu = &sync.RWMutex{}
 	w.exchanges = make(map[string]*Exchange)
+	w.logger = new(logger)
 	w.publishers = make(map[string]*Publisher)
 	w.queueBindings = make(map[string]*QueueBinding)
 	w.queues = make(map[string]*Queue)
