@@ -63,6 +63,8 @@ func (p *Publisher) Stop() error {
 }
 
 func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
+	p.wrapbit.waitBlocked()
+
 	return p.channel.Publish(
 		p.config.exchange,
 		p.config.routingKey,

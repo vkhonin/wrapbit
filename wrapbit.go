@@ -12,6 +12,8 @@ import (
 )
 
 type Wrapbit struct {
+	blockedChanMu *sync.RWMutex
+	blockedChan   chan struct{}
 	channel       *amqp091.Channel
 	config        WrapbitConfig
 	connectionMu  *sync.RWMutex
@@ -71,6 +73,9 @@ func (l *logger) log(ctx context.Context, level slog.Level, args ...any) {
 
 func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 	w := new(Wrapbit)
+	w.blockedChanMu = &sync.RWMutex{}
+	w.blockedChan = make(chan struct{})
+	close(w.blockedChan)
 	w.config = wrapbitDefaultConfig()
 	w.connectionMu = &sync.RWMutex{}
 	w.exchanges = make(map[string]*Exchange)
@@ -303,6 +308,13 @@ func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consume
 	return c, nil
 }
 
+func (w *Wrapbit) waitBlocked() {
+	w.blockedChanMu.RLock()
+	ch := w.blockedChan
+	w.blockedChanMu.RUnlock()
+	<-ch
+}
+
 func (w *Wrapbit) connect() error {
 	w.connectionMu.Lock()
 	defer w.connectionMu.Unlock()
@@ -340,7 +352,22 @@ connection:
 		return fmt.Errorf("establish connection: %w", err)
 	}
 
-	var connCloseChan <-chan *amqp091.Error = w.connection.NotifyClose(make(chan *amqp091.Error, 1))
+	var (
+		connBlockChan <-chan amqp091.Blocking = w.connection.NotifyBlocked(make(chan amqp091.Blocking, 1))
+		connCloseChan <-chan *amqp091.Error   = w.connection.NotifyClose(make(chan *amqp091.Error, 1))
+	)
+
+	go func() {
+		for blocking := range connBlockChan {
+			w.blockedChanMu.Lock()
+			if blocking.Active {
+				w.blockedChan = make(chan struct{})
+			} else {
+				close(w.blockedChan)
+			}
+			w.blockedChanMu.Unlock()
+		}
+	}()
 
 	go func() {
 		// TODO: This will run once on non graceful connection close. If w.connect() fails and returns error, it will
