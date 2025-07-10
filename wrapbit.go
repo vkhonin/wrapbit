@@ -34,6 +34,12 @@ type WrapbitConfig struct {
 
 type WrapbitOption func(w *Wrapbit) error
 
+type RetryStrategy func() Attempter
+
+type Attempter interface {
+	Attempt() bool
+}
+
 type Logger interface {
 	Debug(args ...any)
 	Error(args ...any)
@@ -95,8 +101,21 @@ func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 func wrapbitDefaultConfig() WrapbitConfig {
 	return WrapbitConfig{
 		clusterURIs:             nil,
-		channelRetryStrategy:    constantRetryStrategy,
-		connectionRetryStrategy: constantRetryStrategy,
+		channelRetryStrategy:    defaultChannelRetryStrategy,
+		connectionRetryStrategy: defaultConnectionRetryStrategy,
+	}
+}
+
+func defaultConnectionRetryStrategy() Attempter {
+	return &attempter.ExponentialAttempter{
+		BaseBackoff: 500 * time.Millisecond,
+	}
+}
+
+func defaultChannelRetryStrategy() Attempter {
+	return &attempter.LinearAttempter{
+		Backoff:     50 * time.Millisecond,
+		MaxAttempts: 10,
 	}
 }
 
@@ -359,17 +378,4 @@ func (w *Wrapbit) newChannel() (*amqp091.Channel, error) {
 	}
 
 	return channel, nil
-}
-
-type RetryStrategy func() Attempter
-
-type Attempter interface {
-	Attempt() bool
-}
-
-func constantRetryStrategy() Attempter {
-	return &attempter.ConstantAttempter{
-		InitBackoff: time.Second,
-		MaxAttempts: 10,
-	}
 }
