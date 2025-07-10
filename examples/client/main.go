@@ -30,8 +30,6 @@ func main() {
 		wrapbit.WithQueue(testQueueName),
 		wrapbit.WithExchange(testExchangeName),
 		wrapbit.WithQueueBinding(testQueueName, testExchangeName),
-		wrapbit.WithConnectionRetries(10),
-		wrapbit.WithConnectionRetryTimeout(100*time.Millisecond),
 	)
 	if err != nil {
 		fatal(err)

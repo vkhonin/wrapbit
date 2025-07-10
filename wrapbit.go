@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/rabbitmq/amqp091-go"
+	"github.com/vkhonin/wrapbit/internal/attempter"
 	"log/slog"
 	"slices"
 	"sync"
@@ -26,11 +27,9 @@ type Wrapbit struct {
 }
 
 type WrapbitConfig struct {
-	clusterURIs            []string
-	channelRetries         int
-	channelRetryTimeout    time.Duration
-	connectionRetries      int
-	connectionRetryTimeout time.Duration
+	clusterURIs             []string
+	channelRetryStrategy    RetryStrategy
+	connectionRetryStrategy RetryStrategy
 }
 
 type WrapbitOption func(w *Wrapbit) error
@@ -95,7 +94,9 @@ func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 
 func wrapbitDefaultConfig() WrapbitConfig {
 	return WrapbitConfig{
-		clusterURIs: nil,
+		clusterURIs:             nil,
+		channelRetryStrategy:    constantRetryStrategy,
+		connectionRetryStrategy: constantRetryStrategy,
 	}
 }
 
@@ -116,52 +117,6 @@ func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Wra
 
 		// TODO: This kind of storage should be replaced with something more sensible
 		w.queueBindings[fmt.Sprintf("%s:%s:%s", b.config.exchange, b.config.key, b.config.name)] = b
-
-		return nil
-	}
-}
-
-// WithChannelRetries sets number of failed channel opening attempts in case of error before stop attempts
-func WithChannelRetries(n int) WrapbitOption {
-	return func(w *Wrapbit) error {
-		w.config.channelRetries = n
-
-		return nil
-	}
-}
-
-// WithChannelRetryTimeout sets timeout between failed channel opening attempts. Non-positive time.Duration means no
-// timeout.
-func WithChannelRetryTimeout(t time.Duration) WrapbitOption {
-	return func(w *Wrapbit) error {
-		if t.Nanoseconds() < 0 {
-			t = 0
-		}
-
-		w.config.channelRetryTimeout = t
-
-		return nil
-	}
-}
-
-// WithConnectionRetries sets number failed connection attempts in case of error before stop attempts
-func WithConnectionRetries(n int) WrapbitOption {
-	return func(w *Wrapbit) error {
-		w.config.connectionRetries = n
-
-		return nil
-	}
-}
-
-// WithConnectionRetryTimeout sets timeout between failed connection attempts. Non-positive time.Duration means no
-// timeout.
-func WithConnectionRetryTimeout(t time.Duration) WrapbitOption {
-	return func(w *Wrapbit) error {
-		if t.Nanoseconds() < 0 {
-			t = 0
-		}
-
-		w.config.connectionRetryTimeout = t
 
 		return nil
 	}
@@ -322,7 +277,7 @@ func (w *Wrapbit) connect() error {
 	var connErrs []error
 
 connection:
-	for range w.config.connectionRetries {
+	for a := w.config.connectionRetryStrategy(); a.Attempt(); {
 		for _, uri := range w.config.clusterURIs {
 			conn, err := amqp091.Dial(uri)
 			if err != nil {
@@ -334,10 +289,6 @@ connection:
 			w.connection = conn
 
 			break connection
-		}
-
-		if w.config.connectionRetryTimeout.Nanoseconds() > 0 {
-			time.Sleep(w.config.connectionRetryTimeout)
 		}
 	}
 
@@ -386,7 +337,7 @@ func (w *Wrapbit) newChannel() (*amqp091.Channel, error) {
 		channelErrs []error
 	)
 
-	for range w.config.connectionRetries {
+	for a := w.config.channelRetryStrategy(); a.Attempt(); {
 		var err error
 
 		// If connection is closed, both connection and it's channels receive NotifyClose. For channel's close
@@ -401,10 +352,6 @@ func (w *Wrapbit) newChannel() (*amqp091.Channel, error) {
 		}
 
 		channelErrs = append(channelErrs, err)
-
-		if w.config.channelRetryTimeout.Nanoseconds() > 0 {
-			time.Sleep(w.config.channelRetryTimeout)
-		}
 	}
 
 	if channel == nil {
@@ -412,4 +359,17 @@ func (w *Wrapbit) newChannel() (*amqp091.Channel, error) {
 	}
 
 	return channel, nil
+}
+
+type RetryStrategy func() Attempter
+
+type Attempter interface {
+	Attempt() bool
+}
+
+func constantRetryStrategy() Attempter {
+	return &attempter.ConstantAttempter{
+		InitBackoff: time.Second,
+		MaxAttempts: 10,
+	}
 }
