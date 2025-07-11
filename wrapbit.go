@@ -1,12 +1,11 @@
 package wrapbit
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/vkhonin/wrapbit/internal/attempter"
-	"log/slog"
+	"github.com/vkhonin/wrapbit/internal/logger"
 	"slices"
 	"sync"
 	"time"
@@ -47,35 +46,6 @@ type Logger interface {
 	Warn(args ...any)
 }
 
-type logger struct{}
-
-func (l *logger) Debug(args ...any) {
-	l.log(context.Background(), slog.LevelDebug, args)
-}
-
-func (l *logger) Error(args ...any) {
-	l.log(context.Background(), slog.LevelError, args)
-}
-
-func (l *logger) Info(args ...any) {
-	l.log(context.Background(), slog.LevelInfo, args)
-}
-
-func (l *logger) Warn(args ...any) {
-	l.log(context.Background(), slog.LevelWarn, args)
-}
-
-func (l *logger) log(ctx context.Context, level slog.Level, args ...any) {
-	switch len(args) {
-	case 0:
-		slog.Log(ctx, level, "")
-	case 1:
-		slog.Log(ctx, level, fmt.Sprint(args[0]))
-	default:
-		slog.Log(ctx, level, fmt.Sprint(args[0]), args[1:])
-	}
-}
-
 func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 	w := new(Wrapbit)
 	w.blockedChanMu = &sync.RWMutex{}
@@ -84,7 +54,7 @@ func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 	w.config = wrapbitDefaultConfig()
 	w.connectionMu = &sync.RWMutex{}
 	w.exchanges = make(map[string]*Exchange)
-	w.logger = new(logger)
+	w.logger = new(logger.Logger)
 	w.publishers = make(map[string]*Publisher)
 	w.queueBindings = make(map[string]*QueueBinding)
 	w.queues = make(map[string]*Queue)
