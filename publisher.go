@@ -59,6 +59,10 @@ func (p *Publisher) Start() error {
 }
 
 func (p *Publisher) Stop() error {
+	if p.channel == nil {
+		return nil
+	}
+
 	return p.channel.Close()
 }
 

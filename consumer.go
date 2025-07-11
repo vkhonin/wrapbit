@@ -81,6 +81,10 @@ func (c *Consumer) Start(handler Handler) error {
 }
 
 func (c *Consumer) Stop() error {
+	if c.channel == nil {
+		return nil
+	}
+
 	return c.channel.Close()
 }
 

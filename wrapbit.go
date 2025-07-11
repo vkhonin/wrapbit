@@ -210,6 +210,10 @@ func (w *Wrapbit) Stop() error {
 	w.connectionMu.RLock()
 	defer w.connectionMu.RUnlock()
 
+	if w.connection == nil {
+		return nil
+	}
+
 	if err := w.connection.Close(); err != nil {
 		return fmt.Errorf("close connection: %w", err)
 	}
