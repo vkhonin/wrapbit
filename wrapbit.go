@@ -15,7 +15,7 @@ type Wrapbit struct {
 	blockedChanMu *sync.RWMutex
 	blockedChan   chan struct{}
 	channel       *amqp.Channel
-	config        WrapbitConfig
+	config        Config
 	connectionMu  *sync.RWMutex
 	connection    *amqp.Connection
 	exchanges     map[string]*Exchange
@@ -25,13 +25,13 @@ type Wrapbit struct {
 	queues        map[string]*Queue
 }
 
-type WrapbitConfig struct {
+type Config struct {
 	clusterURIs             []string
 	channelRetryStrategy    RetryStrategy
 	connectionRetryStrategy RetryStrategy
 }
 
-type WrapbitOption func(w *Wrapbit) error
+type Option func(w *Wrapbit) error
 
 type RetryStrategy func() Attempter
 
@@ -46,12 +46,12 @@ type Logger interface {
 	Warn(args ...any)
 }
 
-func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
+func New(options ...Option) (*Wrapbit, error) {
 	w := new(Wrapbit)
 	w.blockedChanMu = &sync.RWMutex{}
 	w.blockedChan = make(chan struct{})
 	close(w.blockedChan)
-	w.config = wrapbitDefaultConfig()
+	w.config = defaultConfig()
 	w.connectionMu = &sync.RWMutex{}
 	w.exchanges = make(map[string]*Exchange)
 	w.logger = new(logger.Logger)
@@ -68,8 +68,8 @@ func NewInstance(options ...WrapbitOption) (*Wrapbit, error) {
 	return w, nil
 }
 
-func wrapbitDefaultConfig() WrapbitConfig {
-	return WrapbitConfig{
+func defaultConfig() Config {
+	return Config{
 		clusterURIs:             nil,
 		channelRetryStrategy:    defaultChannelRetryStrategy,
 		connectionRetryStrategy: defaultConnectionRetryStrategy,
@@ -90,7 +90,7 @@ func defaultChannelRetryStrategy() Attempter {
 }
 
 // WithQueueBinding binds given queue to given exchange
-func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) WrapbitOption {
+func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Option {
 	return func(w *Wrapbit) error {
 		b := new(QueueBinding)
 
@@ -112,7 +112,7 @@ func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Wra
 }
 
 // WithExchange declares given exchange
-func WithExchange(name string, options ...ExchangeOption) WrapbitOption {
+func WithExchange(name string, options ...ExchangeOption) Option {
 	return func(w *Wrapbit) error {
 		e := new(Exchange)
 
@@ -133,7 +133,7 @@ func WithExchange(name string, options ...ExchangeOption) WrapbitOption {
 
 // WithNode appends given AMQP URI to list of those used to establish connection. If there are multiple URIs in list,
 // they will be handled as cluster.
-func WithNode(newURI string) WrapbitOption {
+func WithNode(newURI string) Option {
 	return func(w *Wrapbit) error {
 		if !slices.Contains(w.config.clusterURIs, newURI) {
 			w.config.clusterURIs = append(w.config.clusterURIs, newURI)
@@ -144,7 +144,7 @@ func WithNode(newURI string) WrapbitOption {
 }
 
 // WithQueue declares given queue
-func WithQueue(name string, options ...QueueOption) WrapbitOption {
+func WithQueue(name string, options ...QueueOption) Option {
 	return func(w *Wrapbit) error {
 		q := new(Queue)
 

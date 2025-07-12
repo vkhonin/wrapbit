@@ -25,7 +25,7 @@ func fatal(err error) {
 }
 
 func main() {
-	wrapbitInstance, err := wrapbit.NewInstance(
+	wrapbitInstance, err := wrapbit.New(
 		wrapbit.WithNode("amqp://guest:guest@localhost:5673"),
 		wrapbit.WithQueue(testQueueName),
 		wrapbit.WithExchange(testExchangeName),
