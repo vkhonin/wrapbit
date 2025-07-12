@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	testQueueName    = "test_queue"
 	testExchangeName = "test_exchange"
+	testQueueName    = "test_queue"
+	testRoutingKey   = "test_routing_key"
 )
 
 type message struct {
@@ -29,7 +30,11 @@ func main() {
 		wrapbit.WithNode("amqp://guest:guest@localhost:5673"),
 		wrapbit.WithQueue(testQueueName),
 		wrapbit.WithExchange(testExchangeName),
-		wrapbit.WithQueueBinding(testQueueName, testExchangeName),
+		wrapbit.WithQueueBinding(
+			testQueueName,
+			testExchangeName,
+			wrapbit.WithQueueBindingRoutingKey(testRoutingKey),
+		),
 	)
 	if err != nil {
 		fatal(err)
@@ -42,6 +47,7 @@ func main() {
 	publisherInstance, err := wrapbitInstance.NewPublisher(
 		"test_publisher",
 		wrapbit.WithPublisherExchange(testExchangeName),
+		wrapbit.WithPublisherRoutingKey(testRoutingKey),
 	)
 	if err != nil {
 		fatal(err)
