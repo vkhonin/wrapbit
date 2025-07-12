@@ -1,10 +1,10 @@
 package wrapbit
 
-import "github.com/rabbitmq/amqp091-go"
+import amqp "github.com/rabbitmq/amqp091-go"
 
 type Queue struct {
 	config QueueConfig
-	queue  amqp091.Queue
+	queue  amqp.Queue
 }
 
 type QueueConfig struct {
@@ -13,7 +13,7 @@ type QueueConfig struct {
 	autoDelete bool
 	exclusive  bool
 	noWait     bool
-	args       amqp091.Table
+	args       amqp.Table
 }
 
 type QueueOption func(q *Queue) error
@@ -38,7 +38,7 @@ type QueueBindingConfig struct {
 	key      string
 	exchange string
 	noWait   bool
-	args     amqp091.Table
+	args     amqp.Table
 }
 
 type QueueBindingOption func(q *QueueBinding) error

@@ -2,11 +2,11 @@ package wrapbit
 
 import (
 	"fmt"
-	"github.com/rabbitmq/amqp091-go"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Publisher struct {
-	channel *amqp091.Channel
+	channel *amqp.Channel
 	config  PublisherConfig
 	wrapbit *Wrapbit
 }
@@ -22,7 +22,7 @@ type PublisherOption func(p *Publisher) error
 
 func publisherDefaultConfig() PublisherConfig {
 	return PublisherConfig{
-		exchange:   amqp091.DefaultExchange,
+		exchange:   amqp.DefaultExchange,
 		routingKey: "",
 		mandatory:  false,
 		immediate:  false,
@@ -74,7 +74,7 @@ func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 		p.config.routingKey,
 		p.config.mandatory,
 		p.config.immediate,
-		amqp091.Publishing{
+		amqp.Publishing{
 			Body: data,
 		},
 	)

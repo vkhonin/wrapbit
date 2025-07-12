@@ -1,6 +1,6 @@
 package wrapbit
 
-import "github.com/rabbitmq/amqp091-go"
+import amqp "github.com/rabbitmq/amqp091-go"
 
 type Exchange struct {
 	config ExchangeConfig
@@ -13,7 +13,7 @@ type ExchangeConfig struct {
 	autoDelete bool
 	internal   bool
 	noWait     bool
-	args       amqp091.Table
+	args       amqp.Table
 }
 
 type ExchangeOption func(q *Exchange) error
@@ -21,7 +21,7 @@ type ExchangeOption func(q *Exchange) error
 func exchangeDefaultConfig() ExchangeConfig {
 	return ExchangeConfig{
 		name:       "",
-		kind:       amqp091.ExchangeDirect,
+		kind:       amqp.ExchangeDirect,
 		durable:    true,
 		autoDelete: false,
 		internal:   false,

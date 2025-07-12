@@ -2,7 +2,7 @@ package wrapbit
 
 import (
 	"fmt"
-	"github.com/rabbitmq/amqp091-go"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 const (
@@ -12,16 +12,16 @@ const (
 )
 
 type Consumer struct {
-	channel         *amqp091.Channel
-	closeChannel    <-chan *amqp091.Error
+	channel         *amqp.Channel
+	closeChannel    <-chan *amqp.Error
 	config          ConsumerConfig
-	deliveryChannel <-chan amqp091.Delivery
+	deliveryChannel <-chan amqp.Delivery
 	errorChannel    chan error
 	wrapbit         *Wrapbit
 }
 
 type ConsumerConfig struct {
-	args          amqp091.Table
+	args          amqp.Table
 	autoAck       bool
 	autoReconnect bool
 	consumer      string
@@ -38,7 +38,7 @@ type ConsumerOption func(p *Consumer) error
 type Handler func(delivery *Delivery) (Response, error)
 
 type Delivery struct {
-	delivery *amqp091.Delivery
+	delivery *amqp.Delivery
 }
 
 type Response uint8
@@ -73,7 +73,7 @@ func (c *Consumer) Start(handler Handler) error {
 		return fmt.Errorf("start consume: %w", err)
 	}
 
-	c.closeChannel = c.channel.NotifyClose(make(chan *amqp091.Error))
+	c.closeChannel = c.channel.NotifyClose(make(chan *amqp.Error))
 
 	go c.consume(handler)
 

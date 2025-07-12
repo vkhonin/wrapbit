@@ -3,7 +3,7 @@ package wrapbit
 import (
 	"errors"
 	"fmt"
-	"github.com/rabbitmq/amqp091-go"
+	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vkhonin/wrapbit/internal/attempter"
 	"github.com/vkhonin/wrapbit/internal/logger"
 	"slices"
@@ -14,10 +14,10 @@ import (
 type Wrapbit struct {
 	blockedChanMu *sync.RWMutex
 	blockedChan   chan struct{}
-	channel       *amqp091.Channel
+	channel       *amqp.Channel
 	config        WrapbitConfig
 	connectionMu  *sync.RWMutex
-	connection    *amqp091.Connection
+	connection    *amqp.Connection
 	exchanges     map[string]*Exchange
 	logger        Logger
 	publishers    map[string]*Publisher
@@ -272,7 +272,7 @@ func (w *Wrapbit) connect() error {
 connection:
 	for a := w.config.connectionRetryStrategy(); a.Attempt(); {
 		for _, uri := range w.config.clusterURIs {
-			conn, err := amqp091.Dial(uri)
+			conn, err := amqp.Dial(uri)
 			if err != nil {
 				connErrs = append(connErrs, err)
 
@@ -297,8 +297,8 @@ connection:
 	}
 
 	var (
-		connBlockChan <-chan amqp091.Blocking = w.connection.NotifyBlocked(make(chan amqp091.Blocking, 1))
-		connCloseChan <-chan *amqp091.Error   = w.connection.NotifyClose(make(chan *amqp091.Error, 1))
+		connBlockChan <-chan amqp.Blocking = w.connection.NotifyBlocked(make(chan amqp.Blocking, 1))
+		connCloseChan <-chan *amqp.Error   = w.connection.NotifyClose(make(chan *amqp.Error, 1))
 	)
 
 	go func() {
@@ -324,9 +324,9 @@ connection:
 	return nil
 }
 
-func (w *Wrapbit) newChannel() (*amqp091.Channel, error) {
+func (w *Wrapbit) newChannel() (*amqp.Channel, error) {
 	var (
-		channel     *amqp091.Channel
+		channel     *amqp.Channel
 		channelErrs []error
 	)
 
