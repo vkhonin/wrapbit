@@ -115,22 +115,22 @@ func (c *Consumer) consume(handler Handler) {
 			}
 			result, err := handler(&dd)
 			if err != nil {
-				c.wrapbit.logger.Error(fmt.Sprintf("handling Delivery: %w", err))
+				c.wrapbit.logger.Error(fmt.Sprintf("handling Delivery: %v", err))
 
 				break
 			}
 			switch result {
 			case Ack:
 				if err = dd.delivery.Ack(false); err != nil {
-					c.wrapbit.logger.Error(fmt.Sprintf("ack: %w", err))
+					c.wrapbit.logger.Error(fmt.Sprintf("ack: %v", err))
 				}
 			case NackDiscard:
 				if err = dd.delivery.Nack(false, false); err != nil {
-					c.wrapbit.logger.Error(fmt.Sprintf("nack discard: %w", err))
+					c.wrapbit.logger.Error(fmt.Sprintf("nack discard: %v", err))
 				}
 			case NackRequeue:
 				if err = dd.delivery.Nack(false, true); err != nil {
-					c.wrapbit.logger.Error(fmt.Sprintf("nack requeue: %w", err))
+					c.wrapbit.logger.Error(fmt.Sprintf("nack requeue: %v", err))
 				}
 			}
 		case closeErr := <-c.closeChannel:
