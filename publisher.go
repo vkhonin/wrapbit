@@ -13,9 +13,9 @@ type Publisher struct {
 
 type PublisherConfig struct {
 	exchange   string
-	routingKey string
-	mandatory  bool
 	immediate  bool
+	mandatory  bool
+	routingKey string
 }
 
 type PublisherOption func(p *Publisher) error
@@ -23,9 +23,9 @@ type PublisherOption func(p *Publisher) error
 func publisherDefaultConfig() PublisherConfig {
 	return PublisherConfig{
 		exchange:   amqp.DefaultExchange,
-		routingKey: "",
-		mandatory:  false,
 		immediate:  false,
+		mandatory:  false,
+		routingKey: "",
 	}
 }
 
@@ -67,6 +67,12 @@ func (p *Publisher) Stop() error {
 }
 
 func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
+	for _, option := range options {
+		if err := option(p); err != nil {
+			return fmt.Errorf("apply Publisher options on Publish: %w", err)
+		}
+	}
+
 	p.wrapbit.waitBlocked()
 
 	return p.channel.Publish(
