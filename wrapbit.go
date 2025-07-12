@@ -228,6 +228,7 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 
 	p := new(Publisher)
 
+	p.config = publisherDefaultConfig()
 	p.wrapbit = w
 
 	for _, option := range options {
@@ -245,6 +246,7 @@ func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consume
 	c := new(Consumer)
 
 	c.wrapbit = w
+	c.config = consumerDefaultConfig()
 	c.config.queue = queue
 
 	for _, option := range options {

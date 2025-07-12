@@ -43,6 +43,19 @@ type Delivery struct {
 
 type Response uint8
 
+func consumerDefaultConfig() ConsumerConfig {
+	return ConsumerConfig{
+		args:          nil,
+		autoAck:       false,
+		autoReconnect: false,
+		consumer:      "",
+		exclusive:     false,
+		noLocal:       false,
+		noWait:        false,
+		queue:         "",
+	}
+}
+
 // WithAutoReconnect enables automatic reconnection on consumer channel error
 func WithAutoReconnect() ConsumerOption {
 	return func(c *Consumer) error {
