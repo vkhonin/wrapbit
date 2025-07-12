@@ -28,6 +28,7 @@ type ConsumerConfig struct {
 	exclusive     bool
 	noLocal       bool
 	noWait        bool
+	prefetchCount int
 	queue         string
 }
 
@@ -52,6 +53,7 @@ func consumerDefaultConfig() ConsumerConfig {
 		exclusive:     false,
 		noLocal:       false,
 		noWait:        false,
+		prefetchCount: 1,
 		queue:         "",
 	}
 }
@@ -65,6 +67,15 @@ func WithAutoReconnect() ConsumerOption {
 	}
 }
 
+// WithPrefetchCount sets maximum number of deliveries sent by server without acknowledgement
+func WithPrefetchCount(n int) ConsumerOption {
+	return func(c *Consumer) error {
+		c.config.prefetchCount = n
+
+		return nil
+	}
+}
+
 func (c *Consumer) Start(handler Handler) error {
 	ch, err := c.wrapbit.newChannel()
 	if err != nil {
@@ -72,6 +83,10 @@ func (c *Consumer) Start(handler Handler) error {
 	}
 
 	c.channel = ch
+
+	if err = c.channel.Qos(c.config.prefetchCount, 0, false); err != nil {
+		return fmt.Errorf("setting QoS: %w", err)
+	}
 
 	c.deliveryChannel, err = c.channel.Consume(
 		c.config.queue,

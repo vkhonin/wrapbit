@@ -60,6 +60,7 @@ func main() {
 	consumerInstance, err := wrapbitInstance.NewConsumer(
 		testQueueName,
 		wrapbit.WithAutoReconnect(),
+		wrapbit.WithPrefetchCount(2),
 	)
 	if err != nil {
 		fatal(err)
