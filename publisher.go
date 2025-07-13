@@ -48,6 +48,8 @@ func WithPublisherRoutingKey(routingKey string) PublisherOption {
 }
 
 func (p *Publisher) Start() error {
+	p.wrapbit.logger.Debug("Setting up publisher.")
+
 	ch, err := p.wrapbit.newChannel()
 	if err != nil {
 		return fmt.Errorf("establish channel: %w", err)
@@ -55,27 +57,47 @@ func (p *Publisher) Start() error {
 
 	p.channel = ch
 
+	p.wrapbit.logger.Debug("Publisher set up.")
+
 	return nil
 }
 
 func (p *Publisher) Stop() error {
+	p.wrapbit.logger.Debug("Stopping publisher.")
+
 	if p.channel == nil {
+		p.wrapbit.logger.Debug("Publisher stopped (no channel).")
+
 		return nil
 	}
 
-	return p.channel.Close()
+	p.wrapbit.logger.Debug("Closing channel.")
+
+	if err := p.channel.Close(); err != nil {
+		return err
+	}
+
+	p.wrapbit.logger.Debug("Publisher stopped.")
+
+	return nil
 }
 
 func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
+	p.wrapbit.logger.Debug("Preparing publishing.")
+
 	for _, option := range options {
 		if err := option(p); err != nil {
 			return fmt.Errorf("apply Publisher options on Publish: %w", err)
 		}
 	}
 
+	p.wrapbit.logger.Debug("Checking block before publish.")
+
 	p.wrapbit.waitBlocked()
 
-	return p.channel.Publish(
+	p.wrapbit.logger.Debug("Publishing.")
+
+	if err := p.channel.Publish(
 		p.config.exchange,
 		p.config.routingKey,
 		p.config.mandatory,
@@ -83,5 +105,11 @@ func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 		amqp.Publishing{
 			Body: data,
 		},
-	)
+	); err != nil {
+		return err
+	}
+
+	p.wrapbit.logger.Debug("Published.")
+
+	return nil
 }

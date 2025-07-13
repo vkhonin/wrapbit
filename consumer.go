@@ -77,6 +77,8 @@ func WithPrefetchCount(n int) ConsumerOption {
 }
 
 func (c *Consumer) Start(handler Handler) error {
+	c.wrapbit.logger.Debug("Setting up consumer.")
+
 	ch, err := c.wrapbit.newChannel()
 	if err != nil {
 		return fmt.Errorf("establish channel: %w", err)
@@ -84,9 +86,13 @@ func (c *Consumer) Start(handler Handler) error {
 
 	c.channel = ch
 
+	c.wrapbit.logger.Debug("Declaring QoS.")
+
 	if err = c.channel.Qos(c.config.prefetchCount, 0, false); err != nil {
 		return fmt.Errorf("setting QoS: %w", err)
 	}
+
+	c.wrapbit.logger.Debug("Declaring consume.")
 
 	c.deliveryChannel, err = c.channel.Consume(
 		c.config.queue,
@@ -101,19 +107,37 @@ func (c *Consumer) Start(handler Handler) error {
 		return fmt.Errorf("start consume: %w", err)
 	}
 
+	c.wrapbit.logger.Debug("Setting up channel notifications.")
+
 	c.closeChannel = c.channel.NotifyClose(make(chan *amqp.Error))
 
+	c.wrapbit.logger.Debug("Start consuming.")
+
 	go c.consume(handler)
+
+	c.wrapbit.logger.Debug("Consumer set up.")
 
 	return nil
 }
 
 func (c *Consumer) Stop() error {
+	c.wrapbit.logger.Debug("Stopping consumer.")
+
 	if c.channel == nil {
+		c.wrapbit.logger.Debug("Consumer stopped (no channel).")
+
 		return nil
 	}
 
-	return c.channel.Close()
+	c.wrapbit.logger.Debug("Closing channel.")
+
+	if err := c.channel.Close(); err != nil {
+		return err
+	}
+
+	c.wrapbit.logger.Debug("Consumer stopped.")
+
+	return nil
 }
 
 func (c *Consumer) consume(handler Handler) {
@@ -130,30 +154,36 @@ func (c *Consumer) consume(handler Handler) {
 			}
 			result, err := handler(&dd)
 			if err != nil {
-				c.wrapbit.logger.Error(fmt.Sprintf("handling Delivery: %v", err))
+				c.wrapbit.logger.Error("Delivery handler error.", err)
 
 				break
 			}
 			switch result {
 			case Ack:
 				if err = dd.delivery.Ack(false); err != nil {
-					c.wrapbit.logger.Error(fmt.Sprintf("ack: %v", err))
+					c.wrapbit.logger.Error("Ack error.", err)
 				}
 			case NackDiscard:
 				if err = dd.delivery.Nack(false, false); err != nil {
-					c.wrapbit.logger.Error(fmt.Sprintf("nack discard: %v", err))
+					c.wrapbit.logger.Error("Nack discard error.", err)
 				}
 			case NackRequeue:
 				if err = dd.delivery.Nack(false, true); err != nil {
-					c.wrapbit.logger.Error(fmt.Sprintf("nack requeue: %v", err))
+					c.wrapbit.logger.Error("Nack requeue error.", err)
 				}
 			}
 		case closeErr := <-c.closeChannel:
-			if c.config.autoReconnect && closeErr != nil {
-				// TODO: This could be infinite loop. Some break condition (and probably timeout) required.
-				for {
-					if startErr := c.Start(handler); startErr == nil {
-						break
+			if closeErr != nil {
+				c.wrapbit.logger.Warn("Consumer channel error.", closeErr)
+
+				if c.config.autoReconnect {
+					// TODO: This could be infinite loop. Some break condition (and probably timeout) required.
+					for {
+						if startErr := c.Start(handler); startErr == nil {
+							c.wrapbit.logger.Warn("Consumer restart error.", startErr)
+
+							break
+						}
 					}
 				}
 			}

@@ -6,7 +6,9 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vkhonin/wrapbit/internal/attempter"
 	"github.com/vkhonin/wrapbit/internal/logger"
+	"os"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -48,22 +50,37 @@ type Logger interface {
 
 func New(options ...Option) (*Wrapbit, error) {
 	w := new(Wrapbit)
+
+	w.logger = new(logger.NullLogger)
+	if env, found := os.LookupEnv("WRAPBIT_DEBUG_LOG_LEVEL"); found {
+		l := new(logger.DebugLogger)
+		level, _ := strconv.Atoi(env)
+		l.SetLevel(logger.Level(level))
+		w.logger = l
+	}
+
+	w.logger.Debug("Setting up Wrapbit instance.")
+
 	w.blockedChanMu = &sync.RWMutex{}
 	w.blockedChan = make(chan struct{})
 	close(w.blockedChan)
 	w.config = defaultConfig()
 	w.connectionMu = &sync.RWMutex{}
 	w.exchanges = make(map[string]*Exchange)
-	w.logger = new(logger.Logger)
 	w.publishers = make(map[string]*Publisher)
 	w.queueBindings = make(map[string]*QueueBinding)
 	w.queues = make(map[string]*Queue)
+
+	w.logger.Debug("Applying Wrapbit options.")
 
 	for _, option := range options {
 		if err := option(w); err != nil {
 			return nil, fmt.Errorf("apply Wrapbit options: %w", err)
 		}
 	}
+
+	w.logger.Debug("Wrapbit options applied.")
+	w.logger.Debug("Wrapbit instance set up.")
 
 	return w, nil
 }
@@ -168,6 +185,10 @@ func WithQueue(name string, options ...QueueOption) Option {
 }
 
 func (w *Wrapbit) Start() error {
+	w.logger.Debug("Starting Wrapbit instance.")
+
+	// TODO: Two separate connections required for publishers and consumers. This is to avoid potential effect of flow
+	// control on manual acknowledgements.
 	if err := w.connect(); err != nil {
 		return err
 	}
@@ -179,6 +200,8 @@ func (w *Wrapbit) Start() error {
 
 	w.channel = ch
 
+	w.logger.Debug("Declaring queues.")
+
 	for _, q := range w.queues {
 		c := &q.config
 		_, err = w.channel.QueueDeclare(c.name, c.durable, c.autoDelete, c.exclusive, c.noWait, c.args)
@@ -186,6 +209,8 @@ func (w *Wrapbit) Start() error {
 			return fmt.Errorf("declare queue: %w", err)
 		}
 	}
+
+	w.logger.Debug("Declaring exchanges.")
 
 	for _, e := range w.exchanges {
 		c := &e.config
@@ -195,6 +220,8 @@ func (w *Wrapbit) Start() error {
 		}
 	}
 
+	w.logger.Debug("Binding queues.")
+
 	for _, b := range w.queueBindings {
 		c := &b.config
 		err = w.channel.QueueBind(c.name, c.key, c.exchange, c.noWait, c.args)
@@ -203,20 +230,30 @@ func (w *Wrapbit) Start() error {
 		}
 	}
 
+	w.logger.Debug("Wrapbit instance started.")
+
 	return nil
 }
 
 func (w *Wrapbit) Stop() error {
+	w.logger.Debug("Stopping Wrapbit instance.")
+
 	w.connectionMu.RLock()
 	defer w.connectionMu.RUnlock()
 
 	if w.connection == nil {
+		w.logger.Debug("Wrapbit instance stopped (no connection).")
+
 		return nil
 	}
+
+	w.logger.Debug("Closing connection.")
 
 	if err := w.connection.Close(); err != nil {
 		return fmt.Errorf("close connection: %w", err)
 	}
+
+	w.logger.Debug("Wrapbit instance stopped.")
 
 	return nil
 }
@@ -226,10 +263,14 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 		return nil, fmt.Errorf("publisher with name %q exists", name)
 	}
 
+	w.logger.Debug("Setting up Publisher instance.")
+
 	p := new(Publisher)
 
 	p.config = publisherDefaultConfig()
 	p.wrapbit = w
+
+	w.logger.Debug("Applying Publisher options.")
 
 	for _, option := range options {
 		if err := option(p); err != nil {
@@ -239,21 +280,29 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 
 	w.publishers[name] = p
 
+	w.logger.Debug("Publisher instance set up.")
+
 	return p, nil
 }
 
 func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consumer, error) {
+	w.logger.Debug("Setting up Consumer instance.")
+
 	c := new(Consumer)
 
 	c.wrapbit = w
 	c.config = consumerDefaultConfig()
 	c.config.queue = queue
 
+	w.logger.Debug("Applying Consumer options.")
+
 	for _, option := range options {
 		if err := option(c); err != nil {
 			return nil, fmt.Errorf("apply Consumer options: %w", err)
 		}
 	}
+
+	w.logger.Debug("Consumer instance set up.")
 
 	return c, nil
 }
@@ -266,6 +315,8 @@ func (w *Wrapbit) waitBlocked() {
 }
 
 func (w *Wrapbit) connect() error {
+	w.logger.Debug("Setting up connection.")
+
 	w.connectionMu.Lock()
 	defer w.connectionMu.Unlock()
 
@@ -274,8 +325,12 @@ func (w *Wrapbit) connect() error {
 connection:
 	for a := w.config.connectionRetryStrategy(); a.Attempt(); {
 		for _, uri := range w.config.clusterURIs {
+			w.logger.Debug("Dialing.", uri)
+
 			conn, err := amqp.Dial(uri)
 			if err != nil {
+				w.logger.Warn("Dial error.", uri, err)
+
 				connErrs = append(connErrs, err)
 
 				continue
@@ -297,6 +352,8 @@ connection:
 
 		return fmt.Errorf("establish connection: %w", err)
 	}
+
+	w.logger.Debug("Setting up connection notifications.")
 
 	var (
 		connBlockChan <-chan amqp.Blocking = w.connection.NotifyBlocked(make(chan amqp.Blocking, 1))
@@ -323,6 +380,8 @@ connection:
 		}
 	}()
 
+	w.logger.Debug("Connection set up.")
+
 	return nil
 }
 
@@ -331,6 +390,8 @@ func (w *Wrapbit) newChannel() (*amqp.Channel, error) {
 		channel     *amqp.Channel
 		channelErrs []error
 	)
+
+	w.logger.Debug("Setting up channel")
 
 	for a := w.config.channelRetryStrategy(); a.Attempt(); {
 		var err error
@@ -346,12 +407,16 @@ func (w *Wrapbit) newChannel() (*amqp.Channel, error) {
 			break
 		}
 
+		w.logger.Warn("Open channel error.", err)
+
 		channelErrs = append(channelErrs, err)
 	}
 
 	if channel == nil {
 		return nil, fmt.Errorf("establish channel: %w", errors.Join(channelErrs...))
 	}
+
+	w.logger.Debug("Channel set up.")
 
 	return channel, nil
 }
