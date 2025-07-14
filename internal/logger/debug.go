@@ -40,6 +40,7 @@ func (l *DebugLogger) SetLevel(level Level) {
 	case LevelWarn:
 		slogLevel = slog.LevelWarn
 	case LevelError:
+		slogLevel = slog.LevelError
 	default:
 		slogLevel = slog.LevelError
 	}
