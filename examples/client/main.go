@@ -35,6 +35,7 @@ func main() {
 			testExchangeName,
 			wrapbit.WithQueueBindingRoutingKey(testRoutingKey),
 		),
+		wrapbit.WithSeparateConnections(),
 	)
 	if err != nil {
 		fatal(err)

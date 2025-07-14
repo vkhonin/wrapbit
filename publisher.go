@@ -6,9 +6,9 @@ import (
 )
 
 type Publisher struct {
-	channel *amqp.Channel
+	channel *channel
 	config  PublisherConfig
-	wrapbit *Wrapbit
+	logger  Logger
 }
 
 type PublisherConfig struct {
@@ -48,42 +48,31 @@ func WithPublisherRoutingKey(routingKey string) PublisherOption {
 }
 
 func (p *Publisher) Start() error {
-	p.wrapbit.logger.Debug("Setting up publisher.")
+	p.logger.Debug("Setting up publisher.")
 
-	ch, err := p.wrapbit.newChannel()
-	if err != nil {
+	if err := p.channel.connect(); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 
-	p.channel = ch
-
-	p.wrapbit.logger.Debug("Publisher set up.")
+	p.logger.Debug("Publisher set up.")
 
 	return nil
 }
 
 func (p *Publisher) Stop() error {
-	p.wrapbit.logger.Debug("Stopping publisher.")
+	p.logger.Debug("Stopping publisher.")
 
-	if p.channel == nil {
-		p.wrapbit.logger.Debug("Publisher stopped (no channel).")
-
-		return nil
-	}
-
-	p.wrapbit.logger.Debug("Closing channel.")
-
-	if err := p.channel.Close(); err != nil {
+	if err := p.channel.disconnect(); err != nil {
 		return err
 	}
 
-	p.wrapbit.logger.Debug("Publisher stopped.")
+	p.logger.Debug("Publisher stopped.")
 
 	return nil
 }
 
 func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
-	p.wrapbit.logger.Debug("Preparing publishing.")
+	p.logger.Debug("Preparing publishing.")
 
 	for _, option := range options {
 		if err := option(p); err != nil {
@@ -91,13 +80,13 @@ func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 		}
 	}
 
-	p.wrapbit.logger.Debug("Checking block before publish.")
+	p.logger.Debug("Checking block before publish.")
 
-	p.wrapbit.waitBlocked()
+	p.channel.waitBlocked()
 
-	p.wrapbit.logger.Debug("Publishing.")
+	p.logger.Debug("Publishing.")
 
-	if err := p.channel.Publish(
+	if err := p.channel.channel.Publish(
 		p.config.exchange,
 		p.config.routingKey,
 		p.config.mandatory,
@@ -109,7 +98,7 @@ func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 		return err
 	}
 
-	p.wrapbit.logger.Debug("Published.")
+	p.logger.Debug("Published.")
 
 	return nil
 }
