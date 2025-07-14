@@ -86,7 +86,7 @@ func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 
 	p.logger.Debug("Publishing.")
 
-	if err := p.channel.channel.Publish(
+	if err := p.channel.ch.Publish(
 		p.config.exchange,
 		p.config.routingKey,
 		p.config.mandatory,
