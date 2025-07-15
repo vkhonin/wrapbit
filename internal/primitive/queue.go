@@ -4,8 +4,7 @@ import amqp "github.com/rabbitmq/amqp091-go"
 
 type Queue struct {
 	Config QueueConfig
-
-	Queue amqp.Queue
+	Queue  amqp.Queue
 }
 
 type QueueConfig struct {

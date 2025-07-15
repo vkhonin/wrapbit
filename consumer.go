@@ -3,6 +3,8 @@ package wrapbit
 import (
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/vkhonin/wrapbit/internal/transport"
+	"github.com/vkhonin/wrapbit/utils"
 )
 
 const (
@@ -12,12 +14,12 @@ const (
 )
 
 type Consumer struct {
-	channel         *channel
+	channel         *transport.Channel
 	closeChannel    <-chan *amqp.Error
 	config          ConsumerConfig
 	deliveryChannel <-chan amqp.Delivery
 	errorChannel    chan error
-	logger          Logger
+	logger          utils.Logger
 }
 
 type ConsumerConfig struct {
@@ -81,19 +83,19 @@ func (c *Consumer) Start(handler Handler) error {
 
 	c.logger.Debug("Setting up consumer.")
 
-	if err = c.channel.connect(); err != nil {
+	if err = c.channel.Connect(); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 
 	c.logger.Debug("Declaring QoS.")
 
-	if err = c.channel.ch.Qos(c.config.prefetchCount, 0, false); err != nil {
+	if err = c.channel.Ch.Qos(c.config.prefetchCount, 0, false); err != nil {
 		return fmt.Errorf("setting QoS: %w", err)
 	}
 
 	c.logger.Debug("Declaring consume.")
 
-	c.deliveryChannel, err = c.channel.ch.Consume(
+	c.deliveryChannel, err = c.channel.Ch.Consume(
 		c.config.queue,
 		c.config.consumer,
 		c.config.autoAck,
@@ -108,7 +110,7 @@ func (c *Consumer) Start(handler Handler) error {
 
 	c.logger.Debug("Setting up channel notifications.")
 
-	c.closeChannel = c.channel.ch.NotifyClose(make(chan *amqp.Error))
+	c.closeChannel = c.channel.Ch.NotifyClose(make(chan *amqp.Error))
 
 	c.logger.Debug("Start consuming.")
 
@@ -122,7 +124,7 @@ func (c *Consumer) Start(handler Handler) error {
 func (c *Consumer) Stop() error {
 	c.logger.Debug("Stopping publisher.")
 
-	if err := c.channel.disconnect(); err != nil {
+	if err := c.channel.Disconnect(); err != nil {
 		return err
 	}
 

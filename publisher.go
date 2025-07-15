@@ -3,12 +3,14 @@ package wrapbit
 import (
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/vkhonin/wrapbit/internal/transport"
+	"github.com/vkhonin/wrapbit/utils"
 )
 
 type Publisher struct {
-	channel *channel
+	channel *transport.Channel
 	config  PublisherConfig
-	logger  Logger
+	logger  utils.Logger
 }
 
 type PublisherConfig struct {
@@ -50,7 +52,7 @@ func WithPublisherRoutingKey(routingKey string) PublisherOption {
 func (p *Publisher) Start() error {
 	p.logger.Debug("Setting up publisher.")
 
-	if err := p.channel.connect(); err != nil {
+	if err := p.channel.Connect(); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 
@@ -62,7 +64,7 @@ func (p *Publisher) Start() error {
 func (p *Publisher) Stop() error {
 	p.logger.Debug("Stopping publisher.")
 
-	if err := p.channel.disconnect(); err != nil {
+	if err := p.channel.Disconnect(); err != nil {
 		return err
 	}
 
@@ -82,11 +84,11 @@ func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 
 	p.logger.Debug("Checking block before publish.")
 
-	p.channel.waitBlocked()
+	p.channel.WaitBlocked()
 
 	p.logger.Debug("Publishing.")
 
-	if err := p.channel.ch.Publish(
+	if err := p.channel.Ch.Publish(
 		p.config.exchange,
 		p.config.routingKey,
 		p.config.mandatory,

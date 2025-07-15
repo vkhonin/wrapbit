@@ -1,16 +1,15 @@
 package wrapbit
 
 import (
-	"errors"
 	"fmt"
-	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vkhonin/wrapbit/internal/attempter"
 	"github.com/vkhonin/wrapbit/internal/logger"
 	"github.com/vkhonin/wrapbit/internal/primitive"
+	"github.com/vkhonin/wrapbit/internal/transport"
+	"github.com/vkhonin/wrapbit/utils"
 	"os"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -20,11 +19,11 @@ const (
 )
 
 type Wrapbit struct {
-	channel       *channel
+	channel       *transport.Channel
 	config        Config
-	connections   map[string]*connection
+	connections   map[string]*transport.Connection
 	exchanges     map[string]*primitive.Exchange
-	logger        Logger
+	logger        utils.Logger
 	publishers    map[string]*Publisher
 	queueBindings map[string]*primitive.QueueBinding
 	queues        map[string]*primitive.Queue
@@ -32,24 +31,11 @@ type Wrapbit struct {
 
 type Config struct {
 	clusterURIs             []string
-	channelRetryStrategy    RetryStrategy
-	connectionRetryStrategy RetryStrategy
+	channelRetryStrategy    utils.Retry
+	connectionRetryStrategy utils.Retry
 }
 
 type Option func(w *Wrapbit) error
-
-type RetryStrategy func() Attempter
-
-type Attempter interface {
-	Attempt() bool
-}
-
-type Logger interface {
-	Debug(args ...any)
-	Error(args ...any)
-	Info(args ...any)
-	Warn(args ...any)
-}
 
 func New(options ...Option) (*Wrapbit, error) {
 	w := new(Wrapbit)
@@ -65,7 +51,7 @@ func New(options ...Option) (*Wrapbit, error) {
 	w.logger.Debug("Setting up Wrapbit instance.")
 
 	w.config = defaultConfig()
-	w.connections = make(map[string]*connection)
+	w.connections = make(map[string]*transport.Connection)
 	w.exchanges = make(map[string]*primitive.Exchange)
 	w.publishers = make(map[string]*Publisher)
 	w.queueBindings = make(map[string]*primitive.QueueBinding)
@@ -95,13 +81,13 @@ func defaultConfig() Config {
 	}
 }
 
-func defaultConnectionRetryStrategy() Attempter {
+func defaultConnectionRetryStrategy() utils.Attempter {
 	return &attempter.ExponentialAttempter{
 		BaseBackoff: 500 * time.Millisecond,
 	}
 }
 
-func defaultChannelRetryStrategy() Attempter {
+func defaultChannelRetryStrategy() utils.Attempter {
 	return &attempter.LinearAttempter{
 		Backoff:     50 * time.Millisecond,
 		MaxAttempts: 10,
@@ -199,14 +185,14 @@ func (w *Wrapbit) Start() error {
 	w.logger.Debug("Starting Wrapbit instance.")
 
 	for _, conn := range w.connections {
-		if err := conn.connect(); err != nil {
+		if err := conn.Connect(); err != nil {
 			return err
 		}
 	}
 
-	ch := w.connections[commonConn].newChannel()
+	ch := w.connections[commonConn].NewChannel()
 
-	if err := ch.connect(); err != nil {
+	if err := ch.Connect(); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 
@@ -218,7 +204,7 @@ func (w *Wrapbit) Start() error {
 
 	for _, q := range w.queues {
 		c := &q.Config
-		q.Queue, err = w.channel.ch.QueueDeclare(c.Name, c.Durable, c.AutoDelete, c.Exclusive, c.NoWait, c.Args)
+		q.Queue, err = w.channel.Ch.QueueDeclare(c.Name, c.Durable, c.AutoDelete, c.Exclusive, c.NoWait, c.Args)
 		if err != nil {
 			return fmt.Errorf("declare queue: %w", err)
 		}
@@ -228,7 +214,7 @@ func (w *Wrapbit) Start() error {
 
 	for _, e := range w.exchanges {
 		c := &e.Config
-		err = w.channel.ch.ExchangeDeclare(c.Name, c.Kind, c.Durable, c.AutoDelete, c.Internal, c.NoWait, c.Args)
+		err = w.channel.Ch.ExchangeDeclare(c.Name, c.Kind, c.Durable, c.AutoDelete, c.Internal, c.NoWait, c.Args)
 		if err != nil {
 			return fmt.Errorf("declare exchange: %w", err)
 		}
@@ -238,7 +224,7 @@ func (w *Wrapbit) Start() error {
 
 	for _, b := range w.queueBindings {
 		c := &b.Config
-		err = w.channel.ch.QueueBind(c.Name, c.Key, c.Exchange, c.NoWait, c.Args)
+		err = w.channel.Ch.QueueBind(c.Name, c.Key, c.Exchange, c.NoWait, c.Args)
 		if err != nil {
 			return fmt.Errorf("binding queue: %w", err)
 		}
@@ -253,7 +239,7 @@ func (w *Wrapbit) Stop() error {
 	w.logger.Debug("Stopping Wrapbit instance.")
 
 	for _, conn := range w.connections {
-		if err := conn.disconnect(); err != nil {
+		if err := conn.Disconnect(); err != nil {
 			return fmt.Errorf("wrapbit stop: %w", err)
 		}
 	}
@@ -274,7 +260,7 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 
 	p := new(Publisher)
 
-	p.channel = w.connections[publishConn].newChannel()
+	p.channel = w.connections[publishConn].NewChannel()
 	p.config = publisherDefaultConfig()
 	p.logger = w.logger
 
@@ -298,7 +284,7 @@ func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consume
 
 	c := new(Consumer)
 
-	c.channel = w.connections[commonConn].newChannel()
+	c.channel = w.connections[commonConn].NewChannel()
 	c.config = consumerDefaultConfig()
 	c.config.queue = queue
 	c.logger = w.logger
@@ -316,219 +302,16 @@ func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consume
 	return c, nil
 }
 
-func (w *Wrapbit) newConnection() *connection {
-	c := connection{
-		blockChan: make(chan struct{}),
-		chRetry:   w.config.channelRetryStrategy,
-		logger:    w.logger,
-		retry:     w.config.connectionRetryStrategy,
-		uris:      w.config.clusterURIs,
+func (w *Wrapbit) newConnection() *transport.Connection {
+	c := transport.Connection{
+		BlockChan: make(chan struct{}),
+		ChRetry:   w.config.channelRetryStrategy,
+		Logger:    w.logger,
+		Retry:     w.config.connectionRetryStrategy,
+		URIs:      w.config.clusterURIs,
 	}
 
-	close(c.blockChan)
+	close(c.BlockChan)
 
 	return &c
-}
-
-type connection struct {
-	blockMu   sync.RWMutex
-	blockChan chan struct{}
-	chRetry   RetryStrategy
-	connMu    sync.RWMutex
-	conn      *amqp.Connection
-	logger    Logger
-	retry     RetryStrategy
-	uris      []string
-}
-
-func (c *connection) channel() (*amqp.Channel, error) {
-	c.connMu.RLock()
-	defer c.connMu.RUnlock()
-	return c.conn.Channel()
-}
-
-func (c *connection) connect() error {
-	c.logger.Debug("Setting up connection.")
-
-	c.connMu.Lock()
-	defer c.connMu.Unlock()
-
-	conn, err := c.dial()
-	if err != nil {
-		return fmt.Errorf("establish connection: %w", err)
-	}
-
-	c.conn = conn
-
-	c.logger.Debug("Setting up connection notifications.")
-
-	var (
-		blockCh <-chan amqp.Blocking = c.conn.NotifyBlocked(make(chan amqp.Blocking, 1))
-		closeCh <-chan *amqp.Error   = c.conn.NotifyClose(make(chan *amqp.Error, 1))
-	)
-
-	go c.handleBlock(blockCh)
-	go c.handleClose(closeCh)
-
-	c.logger.Debug("Connection set up.")
-
-	return nil
-}
-
-func (c *connection) dial() (*amqp.Connection, error) {
-	if len(c.uris) == 0 {
-		return nil, errors.New("no URIs to connect")
-	}
-
-	var (
-		conn *amqp.Connection
-		err  error
-		errs []error
-	)
-
-	for a := c.retry(); a.Attempt(); {
-		for _, uri := range c.uris {
-			c.logger.Debug("Dialing.", uri)
-
-			if conn, err = amqp.Dial(uri); err == nil {
-				return conn, nil
-			}
-
-			c.logger.Warn("Dial error.", uri, err)
-
-			errs = append(errs, err)
-		}
-	}
-
-	return nil, errors.Join(errs...)
-}
-
-func (c *connection) disconnect() error {
-	c.connMu.RLock()
-	defer c.connMu.RUnlock()
-
-	if c.conn == nil {
-		c.logger.Debug("Not connected.")
-
-		return nil
-	}
-
-	c.logger.Debug("Disconnecting.")
-
-	if err := c.conn.Close(); err != nil {
-		return fmt.Errorf("close connection: %w", err)
-	}
-
-	c.logger.Debug("Disconnected.")
-
-	return nil
-}
-
-func (c *connection) handleBlock(blockCh <-chan amqp.Blocking) {
-	// Closes blockChan if not closed yet, so that waiting instances will not hang forever.
-	c.blockMu.Lock()
-	select {
-	case <-c.blockChan:
-	default:
-		if c.blockChan != nil {
-			close(c.blockChan)
-		}
-	}
-	c.blockMu.Unlock()
-
-	for blocking := range blockCh {
-		c.blockMu.Lock()
-		if blocking.Active {
-			c.blockChan = make(chan struct{})
-		} else {
-			close(c.blockChan)
-		}
-		c.blockMu.Unlock()
-	}
-}
-
-func (c *connection) handleClose(closeCh <-chan *amqp.Error) {
-	// TODO: This will run once on non graceful connection close. If c.connect() fails and returns error, it will
-	// not be known and everything will hang forever (until manual c.Start()). So this should be handled properly.
-	if err := <-closeCh; err != nil {
-		_ = c.connect()
-	}
-}
-
-func (c *connection) newChannel() *channel {
-	return &channel{
-		conn:   c,
-		logger: c.logger,
-		retry:  c.chRetry,
-	}
-}
-
-func (c *connection) waitBlocked() {
-	c.blockMu.RLock()
-	ch := c.blockChan
-	c.blockMu.RUnlock()
-	<-ch
-}
-
-type channel struct {
-	ch     *amqp.Channel
-	conn   *connection
-	logger Logger
-	retry  RetryStrategy
-}
-
-func (c *channel) connect() error {
-	var (
-		ch   *amqp.Channel
-		err  error
-		errs []error
-	)
-
-	c.logger.Debug("Setting up channel")
-
-	for a := c.retry(); a.Attempt(); {
-		// If connection is closed, both connection and it's channels receive NotifyClose. For channel's close
-		// notification chan there is no way to distinguish whether connection or channel was closed. So there's a
-		// chance that channel will lock mutex earlier than connection will. But due to how RWMutex works, this should
-		// consume at most one retry for each channel, so there is no reason to overengineer here ATM.
-		if ch, err = c.conn.channel(); ch != nil {
-			break
-		}
-
-		c.logger.Warn("Open channel error.", err)
-
-		errs = append(errs, err)
-	}
-
-	if ch == nil {
-		return fmt.Errorf("establish channel: %w", errors.Join(errs...))
-	}
-
-	c.ch = ch
-
-	c.logger.Debug("Channel set up.")
-
-	return nil
-}
-
-func (c *channel) disconnect() error {
-	if c.ch == nil {
-		c.logger.Debug("Channel not connected.")
-
-		return nil
-	}
-
-	c.logger.Debug("Disconnecting channel.")
-
-	if err := c.ch.Close(); err != nil {
-		return fmt.Errorf("close channel: %w", err)
-	}
-
-	c.logger.Debug("Disconnected channel.")
-
-	return nil
-}
-
-func (c *channel) waitBlocked() {
-	c.conn.waitBlocked()
 }
