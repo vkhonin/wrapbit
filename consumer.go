@@ -60,24 +60,6 @@ func consumerDefaultConfig() ConsumerConfig {
 	}
 }
 
-// WithAutoReconnect enables automatic reconnection on consumer channel error
-func WithAutoReconnect() ConsumerOption {
-	return func(c *Consumer) error {
-		c.config.autoReconnect = true
-
-		return nil
-	}
-}
-
-// WithPrefetchCount sets maximum number of deliveries sent by server without acknowledgement
-func WithPrefetchCount(n int) ConsumerOption {
-	return func(c *Consumer) error {
-		c.config.prefetchCount = n
-
-		return nil
-	}
-}
-
 func (c *Consumer) Start(handler Handler) error {
 	var err error
 

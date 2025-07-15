@@ -31,24 +31,6 @@ func publisherDefaultConfig() PublisherConfig {
 	}
 }
 
-// WithPublisherExchange sets default exchange to be used on Publish
-func WithPublisherExchange(exchange string) PublisherOption {
-	return func(p *Publisher) error {
-		p.config.exchange = exchange
-
-		return nil
-	}
-}
-
-// WithPublisherRoutingKey sets default routing key to be used on Publish
-func WithPublisherRoutingKey(routingKey string) PublisherOption {
-	return func(p *Publisher) error {
-		p.config.routingKey = routingKey
-
-		return nil
-	}
-}
-
 func (p *Publisher) Start() error {
 	p.logger.Debug("Setting up publisher.")
 

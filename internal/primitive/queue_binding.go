@@ -25,11 +25,3 @@ func QueueBindingDefaultConfig() QueueBindingConfig {
 		Args:     nil,
 	}
 }
-
-func WithQueueBindingRoutingKey(key string) QueueBindingOption {
-	return func(b *QueueBinding) error {
-		b.Config.Key = key
-
-		return nil
-	}
-}

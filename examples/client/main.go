@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/vkhonin/wrapbit"
-	"github.com/vkhonin/wrapbit/internal/primitive"
 	"log/slog"
 	"math/rand"
 	"os"
@@ -35,7 +34,7 @@ func main() {
 		wrapbit.WithQueueBinding(
 			testQueueName,
 			testExchangeName,
-			primitive.WithQueueBindingRoutingKey(testRoutingKey),
+			wrapbit.WithQueueBindingRoutingKey(testRoutingKey),
 		),
 		wrapbit.WithSeparateConnections(),
 	)
