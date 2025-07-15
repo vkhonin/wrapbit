@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/vkhonin/wrapbit"
+	"github.com/vkhonin/wrapbit/internal/primitive"
+	"log/slog"
 	"math/rand"
 	"os"
 	"time"
@@ -33,7 +35,7 @@ func main() {
 		wrapbit.WithQueueBinding(
 			testQueueName,
 			testExchangeName,
-			wrapbit.WithQueueBindingRoutingKey(testRoutingKey),
+			primitive.WithQueueBindingRoutingKey(testRoutingKey),
 		),
 		wrapbit.WithSeparateConnections(),
 	)
@@ -78,7 +80,7 @@ func main() {
 			return wrapbit.NackRequeue, nil
 		}
 
-		fmt.Printf("message %d: %s\n", m.ID, m.Value)
+		slog.Info("Got message:", "ID", m.ID, "Value", m.Value)
 
 		return wrapbit.Ack, nil
 	})

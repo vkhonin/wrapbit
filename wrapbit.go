@@ -6,6 +6,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vkhonin/wrapbit/internal/attempter"
 	"github.com/vkhonin/wrapbit/internal/logger"
+	"github.com/vkhonin/wrapbit/internal/primitive"
 	"os"
 	"slices"
 	"strconv"
@@ -22,11 +23,11 @@ type Wrapbit struct {
 	channel       *channel
 	config        Config
 	connections   map[string]*connection
-	exchanges     map[string]*Exchange
+	exchanges     map[string]*primitive.Exchange
 	logger        Logger
 	publishers    map[string]*Publisher
-	queueBindings map[string]*QueueBinding
-	queues        map[string]*Queue
+	queueBindings map[string]*primitive.QueueBinding
+	queues        map[string]*primitive.Queue
 }
 
 type Config struct {
@@ -65,10 +66,10 @@ func New(options ...Option) (*Wrapbit, error) {
 
 	w.config = defaultConfig()
 	w.connections = make(map[string]*connection)
-	w.exchanges = make(map[string]*Exchange)
+	w.exchanges = make(map[string]*primitive.Exchange)
 	w.publishers = make(map[string]*Publisher)
-	w.queueBindings = make(map[string]*QueueBinding)
-	w.queues = make(map[string]*Queue)
+	w.queueBindings = make(map[string]*primitive.QueueBinding)
+	w.queues = make(map[string]*primitive.Queue)
 
 	w.logger.Debug("Applying Wrapbit options.")
 
@@ -108,13 +109,13 @@ func defaultChannelRetryStrategy() Attempter {
 }
 
 // WithQueueBinding binds given queue to given exchange
-func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Option {
+func WithQueueBinding(queue, exchange string, options ...primitive.QueueBindingOption) Option {
 	return func(w *Wrapbit) error {
-		b := new(QueueBinding)
+		b := new(primitive.QueueBinding)
 
-		b.config = queueBindingDefaultConfig()
-		b.config.name = queue
-		b.config.exchange = exchange
+		b.Config = primitive.QueueBindingDefaultConfig()
+		b.Config.Name = queue
+		b.Config.Exchange = exchange
 
 		for _, option := range options {
 			if err := option(b); err != nil {
@@ -123,19 +124,19 @@ func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Opt
 		}
 
 		// TODO: This kind of storage should be replaced with something more sensible
-		w.queueBindings[fmt.Sprintf("%s:%s:%s", b.config.exchange, b.config.key, b.config.name)] = b
+		w.queueBindings[fmt.Sprintf("%s:%s:%s", b.Config.Exchange, b.Config.Key, b.Config.Name)] = b
 
 		return nil
 	}
 }
 
 // WithExchange declares given exchange
-func WithExchange(name string, options ...ExchangeOption) Option {
+func WithExchange(name string, options ...primitive.ExchangeOption) Option {
 	return func(w *Wrapbit) error {
-		e := new(Exchange)
+		e := new(primitive.Exchange)
 
-		e.config = exchangeDefaultConfig()
-		e.config.name = name
+		e.Config = primitive.ExchangeDefaultConfig()
+		e.Config.Name = name
 
 		for _, option := range options {
 			if err := option(e); err != nil {
@@ -162,12 +163,12 @@ func WithNode(newURI string) Option {
 }
 
 // WithQueue declares given queue
-func WithQueue(name string, options ...QueueOption) Option {
+func WithQueue(name string, options ...primitive.QueueOption) Option {
 	return func(w *Wrapbit) error {
-		q := new(Queue)
+		q := new(primitive.Queue)
 
-		q.config = queueDefaultConfig()
-		q.config.name = name
+		q.Config = primitive.QueueDefaultConfig()
+		q.Config.Name = name
 
 		for _, option := range options {
 			if err := option(q); err != nil {
@@ -213,9 +214,11 @@ func (w *Wrapbit) Start() error {
 
 	w.logger.Debug("Declaring queues.")
 
+	var err error
+
 	for _, q := range w.queues {
-		c := &q.config
-		_, err := w.channel.ch.QueueDeclare(c.name, c.durable, c.autoDelete, c.exclusive, c.noWait, c.args)
+		c := &q.Config
+		q.Queue, err = w.channel.ch.QueueDeclare(c.Name, c.Durable, c.AutoDelete, c.Exclusive, c.NoWait, c.Args)
 		if err != nil {
 			return fmt.Errorf("declare queue: %w", err)
 		}
@@ -224,8 +227,8 @@ func (w *Wrapbit) Start() error {
 	w.logger.Debug("Declaring exchanges.")
 
 	for _, e := range w.exchanges {
-		c := &e.config
-		err := w.channel.ch.ExchangeDeclare(c.name, c.kind, c.durable, c.autoDelete, c.internal, c.noWait, c.args)
+		c := &e.Config
+		err = w.channel.ch.ExchangeDeclare(c.Name, c.Kind, c.Durable, c.AutoDelete, c.Internal, c.NoWait, c.Args)
 		if err != nil {
 			return fmt.Errorf("declare exchange: %w", err)
 		}
@@ -234,8 +237,8 @@ func (w *Wrapbit) Start() error {
 	w.logger.Debug("Binding queues.")
 
 	for _, b := range w.queueBindings {
-		c := &b.config
-		err := w.channel.ch.QueueBind(c.name, c.key, c.exchange, c.noWait, c.args)
+		c := &b.Config
+		err = w.channel.ch.QueueBind(c.Name, c.Key, c.Exchange, c.NoWait, c.Args)
 		if err != nil {
 			return fmt.Errorf("binding queue: %w", err)
 		}
