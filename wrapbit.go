@@ -17,9 +17,10 @@ const (
 	publishConn = "publish"
 )
 
+// Wrapbit is an instance that manages server interaction and creates [Consumer] and [Producer].
 type Wrapbit struct {
 	channel       *transport.Channel
-	config        Config
+	config        config
 	connections   map[string]*transport.Connection
 	exchanges     map[string]*primitive.Exchange
 	logger        utils.Logger
@@ -28,14 +29,13 @@ type Wrapbit struct {
 	queues        map[string]*primitive.Queue
 }
 
-type Config struct {
+type config struct {
 	clusterURIs             []string
 	channelRetryStrategy    utils.Retry
 	connectionRetryStrategy utils.Retry
 }
 
-type Option func(w *Wrapbit) error
-
+// New creates [Wrapbit] instance with given [Option].
 func New(options ...Option) (*Wrapbit, error) {
 	w := new(Wrapbit)
 
@@ -65,6 +65,7 @@ func New(options ...Option) (*Wrapbit, error) {
 	}
 
 	w.connections[commonConn] = w.newConnection()
+	w.connections[publishConn] = w.newConnection()
 
 	w.logger.Debug("Wrapbit options applied.")
 	w.logger.Debug("Wrapbit instance set up.")
@@ -72,8 +73,8 @@ func New(options ...Option) (*Wrapbit, error) {
 	return w, nil
 }
 
-func defaultConfig() Config {
-	return Config{
+func defaultConfig() config {
+	return config{
 		clusterURIs:             nil,
 		channelRetryStrategy:    defaultChannelRetryStrategy,
 		connectionRetryStrategy: defaultConnectionRetryStrategy,
@@ -93,6 +94,7 @@ func defaultChannelRetryStrategy() utils.Attempter {
 	}
 }
 
+// Start establishes connections to server and declares queues, exchanges and bindings.
 func (w *Wrapbit) Start() error {
 	w.logger.Debug("Starting Wrapbit instance.")
 
@@ -147,22 +149,23 @@ func (w *Wrapbit) Start() error {
 	return nil
 }
 
+// Stop closes all connections to server.
 func (w *Wrapbit) Stop() error {
 	w.logger.Debug("Stopping Wrapbit instance.")
 
+	// TODO: when NotifyPublish will be implemented, we should wait for all Confirmations before closing Connection.
 	for _, conn := range w.connections {
 		if err := conn.Disconnect(); err != nil {
 			return fmt.Errorf("wrapbit stop: %w", err)
 		}
 	}
 
-	// TODO: Add publishers connection as well.
-
 	w.logger.Debug("Wrapbit instance stopped.")
 
 	return nil
 }
 
+// NewPublisher creates publisher with given name and [PublisherOption].
 func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publisher, error) {
 	if _, exists := w.publishers[name]; exists {
 		return nil, fmt.Errorf("publisher with name %q exists", name)
@@ -195,6 +198,7 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 	return p, nil
 }
 
+// NewConsumer creates publisher with given target queue and [ConsumerOption].
 func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consumer, error) {
 	w.logger.Debug("Setting up Consumer instance.")
 

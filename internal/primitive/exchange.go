@@ -16,8 +16,6 @@ type ExchangeConfig struct {
 	Args       amqp.Table
 }
 
-type ExchangeOption func(q *Exchange) error
-
 func ExchangeDefaultConfig() ExchangeConfig {
 	return ExchangeConfig{
 		Name:       "",

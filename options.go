@@ -6,8 +6,15 @@ import (
 	"slices"
 )
 
-// WithExchange declares given exchange
-func WithExchange(name string, options ...primitive.ExchangeOption) Option {
+// Option is a function that applies when [Wrapbit] instance is created and changes its settings.
+type Option func(w *Wrapbit) error
+
+// ExchangeOption is a function that applies when exchange is created and changes its settings.
+type ExchangeOption func(q *primitive.Exchange) error
+
+// WithExchange will declare exchange with given name and options on [Wrapbit.Start]. If no [ExchangeOption] supplied,
+// durable direct exchange with given name will be declared.
+func WithExchange(name string, options ...ExchangeOption) Option {
 	return func(w *Wrapbit) error {
 		e := new(primitive.Exchange)
 
@@ -26,8 +33,8 @@ func WithExchange(name string, options ...primitive.ExchangeOption) Option {
 	}
 }
 
-// WithNode appends given AMQP URI to list of those used to establish connection. If there are multiple URIs in list,
-// they will be handled as cluster.
+// WithNode will use given URI to connect to server on [Wrapbit.Start]. If option is used multiple times, all unique
+// URIs will be stored in given order. On [Wrapbit.Start], first successfully connected node will be used.
 func WithNode(newURI string) Option {
 	return func(w *Wrapbit) error {
 		if !slices.Contains(w.config.clusterURIs, newURI) {
@@ -38,8 +45,9 @@ func WithNode(newURI string) Option {
 	}
 }
 
-// WithQueue declares given queue
-func WithQueue(name string, options ...primitive.QueueOption) Option {
+// WithQueue will declare queue with given name and options on [Wrapbit.Start]. If no [QueueOption] supplied,
+// durable queue with given name will be declared.
+func WithQueue(name string, options ...QueueOption) Option {
 	return func(w *Wrapbit) error {
 		q := new(primitive.Queue)
 
@@ -62,8 +70,9 @@ func WithQueue(name string, options ...primitive.QueueOption) Option {
 	}
 }
 
-// WithQueueBinding binds given queue to given exchange
-func WithQueueBinding(queue, exchange string, options ...primitive.QueueBindingOption) Option {
+// WithQueueBinding binds queue to exchange by their names using [QueueBindingOption] on [Wrapbit.Start]. Queue and
+// exchange should be declared with corresponding [WithQueue] and [WithExchange] options.
+func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Option {
 	return func(w *Wrapbit) error {
 		b := new(primitive.QueueBinding)
 
@@ -84,16 +93,22 @@ func WithQueueBinding(queue, exchange string, options ...primitive.QueueBindingO
 	}
 }
 
-// WithSeparateConnections makes Wrapbit use two separate connections - one for publishing, one for consuming.
-func WithSeparateConnections() Option {
+// WithSingleConnection makes [Wrapbit] open only one connection on [Wrapbit.Start]. Normally [Wrapbit] uses two
+// separate connections - one for publisher and one for consumers and system activities. Separate connection for
+// publishers is required for TCP pushback to not affect consumers and system activities.
+func WithSingleConnection() Option {
 	return func(w *Wrapbit) error {
-		w.connections[publishConn] = w.newConnection()
+		delete(w.connections, publishConn)
 
 		return nil
 	}
 }
 
-// WithPublisherExchange sets default exchange to be used on Publish
+// PublisherOption is a function that applies when [Publisher] is created and changes its settings.
+type PublisherOption func(p *Publisher) error
+
+// WithPublisherExchange sets exchange to be used on [Publisher.Publish]. Exchange should be declared using
+// [WithExchange] options.
 func WithPublisherExchange(exchange string) PublisherOption {
 	return func(p *Publisher) error {
 		p.config.exchange = exchange
@@ -102,7 +117,7 @@ func WithPublisherExchange(exchange string) PublisherOption {
 	}
 }
 
-// WithPublisherRoutingKey sets default routing key to be used on Publish
+// WithPublisherRoutingKey sets routing key to be used on [Publisher.Publish].
 func WithPublisherRoutingKey(routingKey string) PublisherOption {
 	return func(p *Publisher) error {
 		p.config.routingKey = routingKey
@@ -111,7 +126,10 @@ func WithPublisherRoutingKey(routingKey string) PublisherOption {
 	}
 }
 
-// WithAutoReconnect enables automatic reconnection on consumer channel error
+// ConsumerOption is a function that applies when [Consumer] is created and changes its settings.
+type ConsumerOption func(p *Consumer) error
+
+// WithAutoReconnect makes [Consumer] open new channel when current channel is closed for any reason.
 func WithAutoReconnect() ConsumerOption {
 	return func(c *Consumer) error {
 		c.config.autoReconnect = true
@@ -120,7 +138,7 @@ func WithAutoReconnect() ConsumerOption {
 	}
 }
 
-// WithPrefetchCount sets maximum number of deliveries sent by server without acknowledgement
+// WithPrefetchCount makes server send this many [Delivery] without acknowledgement from [Consumer].
 func WithPrefetchCount(n int) ConsumerOption {
 	return func(c *Consumer) error {
 		c.config.prefetchCount = n
@@ -129,7 +147,14 @@ func WithPrefetchCount(n int) ConsumerOption {
 	}
 }
 
-func WithQueueBindingRoutingKey(key string) primitive.QueueBindingOption {
+// QueueOption is a function that applies when queue is created and changes its settings.
+type QueueOption func(q *primitive.Queue) error
+
+// QueueBindingOption is a function that applies when queue is being bound to exchange and changes binding settings.
+type QueueBindingOption func(q *primitive.QueueBinding) error
+
+// WithQueueBindingRoutingKey sets routing key for queue to exchange binding.
+func WithQueueBindingRoutingKey(key string) QueueBindingOption {
 	return func(b *primitive.QueueBinding) error {
 		b.Config.Key = key
 

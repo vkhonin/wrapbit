@@ -16,8 +16,6 @@ type QueueConfig struct {
 	Args       amqp.Table
 }
 
-type QueueOption func(q *Queue) error
-
 func QueueDefaultConfig() QueueConfig {
 	return QueueConfig{
 		Name:       "",

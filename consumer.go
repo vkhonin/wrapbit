@@ -8,21 +8,22 @@ import (
 )
 
 const (
-	Ack Response = iota
-	NackDiscard
-	NackRequeue
+	Ack         Response = iota // ACK will be sent on handled Delivery.
+	NackDiscard                 // NACK will be sent on handled Delivery. Message will be discarded without requeue.
+	NackRequeue                 // NACK will be sent on handled Delivery. Message will be requeued.
 )
 
+// Consumer is an instance that consumes from its designated queue.
 type Consumer struct {
 	channel         *transport.Channel
 	closeChannel    <-chan *amqp.Error
-	config          ConsumerConfig
+	config          consumerConfig
 	deliveryChannel <-chan amqp.Delivery
 	errorChannel    chan error
 	logger          utils.Logger
 }
 
-type ConsumerConfig struct {
+type consumerConfig struct {
 	args          amqp.Table
 	autoAck       bool
 	autoReconnect bool
@@ -34,20 +35,21 @@ type ConsumerConfig struct {
 	queue         string
 }
 
-type ConsumerOption func(p *Consumer) error
-
-// Handler should contain Delivery-handling logic and return Response code and error if any. In case consumer is
-// autoAck, Response code is not honoured.
+// Handler is a function supplied to [Consumer] and used to handle [Delivery]. It should return [Response] depending on
+// desired acknowledgement type. If [Consumer] started with auto acknowledgement, then [Response] is not honored.
 type Handler func(delivery *Delivery) (Response, error)
 
+// Delivery is an entity sent by server to [Consumer] when it is running.
 type Delivery struct {
 	delivery *amqp.Delivery
 }
 
+// Response is a code to be returned from [Handler]. It defines what kind of acknowledgement will consumer send on
+// manual acknowledgement.
 type Response uint8
 
-func consumerDefaultConfig() ConsumerConfig {
-	return ConsumerConfig{
+func consumerDefaultConfig() consumerConfig {
+	return consumerConfig{
 		args:          nil,
 		autoAck:       false,
 		autoReconnect: false,
@@ -60,6 +62,8 @@ func consumerDefaultConfig() ConsumerConfig {
 	}
 }
 
+// Start establishes channel to server and starts consuming [Delivery] and handle them using given [Handler]. Depending
+// on [ConsumerOption], it also handles various notifications and errors from server.
 func (c *Consumer) Start(handler Handler) error {
 	var err error
 
@@ -103,6 +107,7 @@ func (c *Consumer) Start(handler Handler) error {
 	return nil
 }
 
+// Stop stops consuming [Delivery] and closes channel to server.
 func (c *Consumer) Stop() error {
 	c.logger.Debug("Stopping publisher.")
 
@@ -133,6 +138,7 @@ func (c *Consumer) consume(handler Handler) {
 
 				break
 			}
+			// TODO: Do not honor result if consuming with auto acknowledge.
 			switch result {
 			case Ack:
 				if err = dd.delivery.Ack(false); err != nil {
@@ -168,6 +174,7 @@ func (c *Consumer) consume(handler Handler) {
 	}
 }
 
+// Body returns body of a message itself.
 func (d *Delivery) Body() []byte {
 	return d.delivery.Body
 }

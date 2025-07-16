@@ -14,8 +14,6 @@ type QueueBindingConfig struct {
 	Args     amqp.Table
 }
 
-type QueueBindingOption func(q *QueueBinding) error
-
 func QueueBindingDefaultConfig() QueueBindingConfig {
 	return QueueBindingConfig{
 		Name:     "",

@@ -7,23 +7,22 @@ import (
 	"github.com/vkhonin/wrapbit/utils"
 )
 
+// Publisher is an instance that publishes to its designated exchange.
 type Publisher struct {
 	channel *transport.Channel
-	config  PublisherConfig
+	config  publisherConfig
 	logger  utils.Logger
 }
 
-type PublisherConfig struct {
+type publisherConfig struct {
 	exchange   string
 	immediate  bool
 	mandatory  bool
 	routingKey string
 }
 
-type PublisherOption func(p *Publisher) error
-
-func publisherDefaultConfig() PublisherConfig {
-	return PublisherConfig{
+func publisherDefaultConfig() publisherConfig {
+	return publisherConfig{
 		exchange:   amqp.DefaultExchange,
 		immediate:  false,
 		mandatory:  false,
@@ -31,6 +30,7 @@ func publisherDefaultConfig() PublisherConfig {
 	}
 }
 
+// Start establishes channel to server.
 func (p *Publisher) Start() error {
 	p.logger.Debug("Setting up publisher.")
 
@@ -43,6 +43,7 @@ func (p *Publisher) Start() error {
 	return nil
 }
 
+// Stop closes channel to server.
 func (p *Publisher) Stop() error {
 	p.logger.Debug("Stopping publisher.")
 
@@ -55,9 +56,12 @@ func (p *Publisher) Stop() error {
 	return nil
 }
 
+// Publish publishes given data to server with either current [Publisher] options, or with given [PublisherOption]
+// applied to [Publisher] before publication. Note that [PublisherOption] application to [Publisher] is permanent.
 func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 	p.logger.Debug("Preparing publishing.")
 
+	// TODO: reason whether permanent options application is OK. The other option is to restore config after publication
 	for _, option := range options {
 		if err := option(p); err != nil {
 			return fmt.Errorf("apply Publisher options on Publish: %w", err)
