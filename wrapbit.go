@@ -172,7 +172,11 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 
 	p := new(Publisher)
 
-	p.channel = w.connections[publishConn].NewChannel()
+	if c, ok := w.connections[publishConn]; ok {
+		p.channel = c.NewChannel()
+	} else {
+		p.channel = w.connections[commonConn].NewChannel()
+	}
 	p.config = publisherDefaultConfig()
 	p.logger = w.logger
 
