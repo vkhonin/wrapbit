@@ -158,13 +158,14 @@ func (c *Consumer) consume(handler Handler) {
 				c.logger.Warn("Consumer channel error.", closeErr)
 
 				if c.config.autoReconnect {
+					var startErr error
 					// TODO: This could be infinite loop. Some break condition (and probably timeout) required.
 					for {
-						if startErr := c.Start(handler); startErr == nil {
-							c.logger.Warn("Consumer restart error.", startErr)
-
+						if startErr = c.Start(handler); startErr == nil {
 							break
 						}
+
+						c.logger.Warn("Consumer restart error.", startErr)
 					}
 				}
 			}
