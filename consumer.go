@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/vkhonin/wrapbit/internal/primitive"
 	"github.com/vkhonin/wrapbit/internal/transport"
 	"github.com/vkhonin/wrapbit/utils"
 )
@@ -22,6 +23,7 @@ type Consumer struct {
 	deliveryChannel <-chan amqp.Delivery
 	errorChannel    chan error
 	logger          utils.Logger
+	wrapbit         *Wrapbit
 }
 
 type consumerConfig struct {
@@ -33,7 +35,7 @@ type consumerConfig struct {
 	noLocal       bool
 	noWait        bool
 	prefetchCount int
-	queue         string
+	queue         *primitive.Queue
 }
 
 // Handler is a function supplied to [Consumer] and used to handle [Delivery]. It should return [Response] depending on
@@ -59,7 +61,7 @@ func consumerDefaultConfig() consumerConfig {
 		noLocal:       false,
 		noWait:        false,
 		prefetchCount: 1,
-		queue:         "",
+		queue:         nil,
 	}
 }
 
@@ -69,6 +71,10 @@ func (c *Consumer) Start(handler Handler) error {
 	var err error
 
 	c.logger.Debug("Setting up consumer.")
+
+	c.channel.CancelHandler = func(tag string) error {
+		return c.Start(handler)
+	}
 
 	if err = c.channel.Connect(context.TODO()); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
@@ -80,10 +86,16 @@ func (c *Consumer) Start(handler Handler) error {
 		return fmt.Errorf("setting QoS: %w", err)
 	}
 
+	c.logger.Debug("Declaring queue and bindings.")
+
+	if err = c.wrapbit.restoreQueue(c.config.queue.Queue.Name); err != nil {
+		return fmt.Errorf("declaring queue: %w", err)
+	}
+
 	c.logger.Debug("Declaring consume.")
 
 	c.deliveryChannel, err = c.channel.Ch.Consume(
-		c.config.queue,
+		c.config.queue.Queue.Name,
 		c.config.consumer,
 		c.config.autoAck,
 		c.config.exclusive,

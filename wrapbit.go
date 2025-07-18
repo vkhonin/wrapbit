@@ -26,7 +26,7 @@ type Wrapbit struct {
 	exchanges     map[string]*primitive.Exchange
 	logger        utils.Logger
 	publishers    map[string]*Publisher
-	queueBindings map[string]*primitive.QueueBinding
+	queueBindings map[string]map[string]*primitive.QueueBinding
 	queues        map[string]*primitive.Queue
 }
 
@@ -54,7 +54,7 @@ func New(options ...Option) (*Wrapbit, error) {
 	w.connections = make(map[string]*transport.Connection)
 	w.exchanges = make(map[string]*primitive.Exchange)
 	w.publishers = make(map[string]*Publisher)
-	w.queueBindings = make(map[string]*primitive.QueueBinding)
+	w.queueBindings = make(map[string]map[string]*primitive.QueueBinding)
 	w.queues = make(map[string]*primitive.Queue)
 
 	w.logger.Debug("Applying Wrapbit options.")
@@ -135,11 +135,12 @@ func (w *Wrapbit) Start() error {
 
 	w.logger.Debug("Binding queues.")
 
-	for _, b := range w.queueBindings {
-		c := &b.Config
-		err = w.channel.Ch.QueueBind(c.Name, c.Key, c.Exchange, c.NoWait, c.Args)
-		if err != nil {
-			return fmt.Errorf("binding queue: %w", err)
+	for _, qbs := range w.queueBindings {
+		for _, b := range qbs {
+			c := &b.Config
+			if err = w.channel.Ch.QueueBind(c.Name, c.Key, c.Exchange, c.NoWait, c.Args); err != nil {
+				return fmt.Errorf("binding queue: %w", err)
+			}
 		}
 	}
 
@@ -198,15 +199,20 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 }
 
 // NewConsumer creates publisher with given target queue and [ConsumerOption].
-func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consumer, error) {
+func (w *Wrapbit) NewConsumer(queueName string, options ...ConsumerOption) (*Consumer, error) {
 	w.logger.Debug("Setting up Consumer instance.")
 
 	c := new(Consumer)
 
 	c.channel = w.connections[commonConn].NewChannel()
 	c.config = consumerDefaultConfig()
-	c.config.queue = queue
 	c.logger = w.logger
+	c.wrapbit = w
+
+	var ok bool
+	if c.config.queue, ok = w.queues[queueName]; !ok {
+		return nil, fmt.Errorf("no %q queue", queueName)
+	}
 
 	w.logger.Debug("Applying Consumer options.")
 
@@ -219,6 +225,33 @@ func (w *Wrapbit) NewConsumer(queue string, options ...ConsumerOption) (*Consume
 	w.logger.Debug("Consumer instance set up.")
 
 	return c, nil
+}
+
+func (w *Wrapbit) restoreQueue(name string) error {
+	q, ok := w.queues[name]
+	if !ok {
+		return fmt.Errorf("no %q queue", name)
+	}
+
+	if err := q.Declare(w.channel.Ch); err != nil {
+		return fmt.Errorf("declare queue: %w", err)
+	}
+
+	qbs, ok := w.queueBindings[name]
+	if !ok {
+		w.logger.Debug("No %q queue bindings.")
+
+		return nil
+	}
+
+	for _, b := range qbs {
+		c := &b.Config
+		if err := w.channel.Ch.QueueBind(c.Name, c.Key, c.Exchange, c.NoWait, c.Args); err != nil {
+			return fmt.Errorf("binding queue: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (w *Wrapbit) newConnection() *transport.Connection {

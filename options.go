@@ -87,7 +87,10 @@ func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Opt
 		}
 
 		// TODO: This kind of storage should be replaced with something more sensible
-		w.queueBindings[fmt.Sprintf("%s:%s:%s", b.Config.Exchange, b.Config.Key, b.Config.Name)] = b
+		if _, ok := w.queueBindings[b.Config.Name]; !ok {
+			w.queueBindings[b.Config.Name] = make(map[string]*primitive.QueueBinding)
+		}
+		w.queueBindings[b.Config.Name][fmt.Sprintf("%s:%s", b.Config.Exchange, b.Config.Key)] = b
 
 		return nil
 	}

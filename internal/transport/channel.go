@@ -9,7 +9,8 @@ import (
 )
 
 type Channel struct {
-	Ch *amqp.Channel
+	CancelHandler func(tag string) error
+	Ch            *amqp.Channel
 
 	conn   *Connection
 	logger utils.Logger
@@ -92,6 +93,18 @@ func (c *Channel) handleAll(ctx context.Context) {
 
 func (c *Channel) handleCancel(_ context.Context, ch <-chan string) {
 	for tag := range ch {
+		if c.CancelHandler == nil {
+			c.logger.Debug("Cancel handler not set.")
+
+			continue
+		}
+
+		if err := c.CancelHandler(tag); err != nil {
+			c.logger.Warn("Cancel handler error.", err)
+
+			continue
+		}
+
 		c.logger.Debug("Cancel handled.", tag)
 	}
 
