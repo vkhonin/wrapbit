@@ -118,9 +118,7 @@ func (w *Wrapbit) Start() error {
 	var err error
 
 	for _, q := range w.queues {
-		c := &q.Config
-		q.Queue, err = w.channel.Ch.QueueDeclare(c.Name, c.Durable, c.AutoDelete, c.Exclusive, c.NoWait, c.Args)
-		if err != nil {
+		if err = q.Declare(w.channel.Ch); err != nil {
 			return fmt.Errorf("declare queue: %w", err)
 		}
 	}

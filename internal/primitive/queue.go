@@ -26,3 +26,16 @@ func QueueDefaultConfig() QueueConfig {
 		Args:       nil,
 	}
 }
+
+func (q *Queue) Declare(ch *amqp.Channel) (err error) {
+	q.Queue, err = ch.QueueDeclare(
+		q.Config.Name,
+		q.Config.Durable,
+		q.Config.AutoDelete,
+		q.Config.Exclusive,
+		q.Config.NoWait,
+		q.Config.Args,
+	)
+
+	return
+}
