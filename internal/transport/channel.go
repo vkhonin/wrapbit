@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -15,7 +16,7 @@ type Channel struct {
 	retry  utils.Retry
 }
 
-func (c *Channel) Connect() error {
+func (c *Channel) Connect(ctx context.Context) error {
 	var (
 		ch   *amqp.Channel
 		err  error
@@ -44,6 +45,8 @@ func (c *Channel) Connect() error {
 
 	c.Ch = ch
 
+	c.handleAll(ctx)
+
 	c.logger.Debug("Channel set up.")
 
 	return nil
@@ -69,4 +72,60 @@ func (c *Channel) Disconnect() error {
 
 func (c *Channel) WaitBlocked() {
 	c.conn.waitBlocked()
+}
+
+func (c *Channel) handleAll(ctx context.Context) {
+	var (
+		cancelCh  <-chan string            = c.Ch.NotifyCancel(make(chan string, 1))
+		closeCh   <-chan *amqp.Error       = c.Ch.NotifyClose(make(chan *amqp.Error, 1))
+		flowCh    <-chan bool              = c.Ch.NotifyFlow(make(chan bool, 1))
+		publishCh <-chan amqp.Confirmation = c.Ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+		returnCh  <-chan amqp.Return       = c.Ch.NotifyReturn(make(chan amqp.Return, 1))
+	)
+
+	go c.handleCancel(ctx, cancelCh)
+	go c.handleClose(ctx, closeCh)
+	go c.handleFlow(ctx, flowCh)
+	go c.handlePublish(ctx, publishCh)
+	go c.handleReturn(ctx, returnCh)
+}
+
+func (c *Channel) handleCancel(_ context.Context, ch <-chan string) {
+	for tag := range ch {
+		c.logger.Debug("Cancel handled.", tag)
+	}
+
+	c.logger.Debug("Cancel handler stopped.")
+}
+
+func (c *Channel) handleClose(_ context.Context, ch <-chan *amqp.Error) {
+	for err := range ch {
+		c.logger.Debug("Close handled.", err)
+	}
+
+	c.logger.Debug("Close handler stopped.")
+}
+
+func (c *Channel) handleFlow(_ context.Context, ch <-chan bool) {
+	for flow := range ch {
+		c.logger.Debug("Flow handled.", flow)
+	}
+
+	c.logger.Debug("Flow handler stopped.")
+}
+
+func (c *Channel) handlePublish(_ context.Context, ch <-chan amqp.Confirmation) {
+	for pub := range ch {
+		c.logger.Debug("Publish handled.", pub)
+	}
+
+	c.logger.Debug("Publish handler stopped.")
+}
+
+func (c *Channel) handleReturn(_ context.Context, ch <-chan amqp.Return) {
+	for ret := range ch {
+		c.logger.Debug("Return handled.", ret)
+	}
+
+	c.logger.Debug("Return handler stopped.")
 }

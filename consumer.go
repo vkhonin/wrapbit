@@ -1,6 +1,7 @@
 package wrapbit
 
 import (
+	"context"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vkhonin/wrapbit/internal/transport"
@@ -69,7 +70,7 @@ func (c *Consumer) Start(handler Handler) error {
 
 	c.logger.Debug("Setting up consumer.")
 
-	if err = c.channel.Connect(); err != nil {
+	if err = c.channel.Connect(context.TODO()); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 

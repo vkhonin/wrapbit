@@ -1,6 +1,7 @@
 package wrapbit
 
 import (
+	"context"
 	"fmt"
 	"github.com/vkhonin/wrapbit/internal/attempter"
 	"github.com/vkhonin/wrapbit/internal/logger"
@@ -106,7 +107,7 @@ func (w *Wrapbit) Start() error {
 
 	ch := w.connections[commonConn].NewChannel()
 
-	if err := ch.Connect(); err != nil {
+	if err := ch.Connect(context.TODO()); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 

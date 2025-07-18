@@ -1,6 +1,7 @@
 package wrapbit
 
 import (
+	"context"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vkhonin/wrapbit/internal/transport"
@@ -34,8 +35,12 @@ func publisherDefaultConfig() publisherConfig {
 func (p *Publisher) Start() error {
 	p.logger.Debug("Setting up publisher.")
 
-	if err := p.channel.Connect(); err != nil {
+	if err := p.channel.Connect(context.TODO()); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
+	}
+
+	if err := p.channel.Ch.Confirm(false); err != nil {
+		return fmt.Errorf("channel confirm: %w", err)
 	}
 
 	p.logger.Debug("Publisher set up.")
