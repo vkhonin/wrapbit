@@ -27,3 +27,15 @@ func ExchangeDefaultConfig() ExchangeConfig {
 		Args:       nil,
 	}
 }
+
+func (q *Exchange) Declare(ch *amqp.Channel) error {
+	return ch.ExchangeDeclare(
+		q.Config.Name,
+		q.Config.Kind,
+		q.Config.Durable,
+		q.Config.AutoDelete,
+		q.Config.Internal,
+		q.Config.NoWait,
+		q.Config.Args,
+	)
+}

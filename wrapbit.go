@@ -9,6 +9,7 @@ import (
 	"github.com/vkhonin/wrapbit/internal/transport"
 	"github.com/vkhonin/wrapbit/utils"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 )
@@ -22,11 +23,10 @@ const (
 type Wrapbit struct {
 	channel       *transport.Channel
 	config        config
-	connections   map[string]*transport.Connection
+	connections   []*transport.Connection
 	exchanges     map[string]*primitive.Exchange
 	logger        utils.Logger
-	publishers    map[string]*Publisher
-	queueBindings map[string]map[string]*primitive.QueueBinding
+	queueBindings []*primitive.QueueBinding
 	queues        map[string]*primitive.Queue
 }
 
@@ -40,59 +40,37 @@ type config struct {
 func New(options ...Option) (*Wrapbit, error) {
 	w := new(Wrapbit)
 
-	w.logger = new(logger.NullLogger)
-	if env, found := os.LookupEnv("WRAPBIT_DEBUG_LOG_LEVEL"); found {
-		l := new(logger.DebugLogger)
-		level, _ := strconv.Atoi(env)
-		l.SetLevel(logger.Level(level))
-		w.logger = l
-	}
+	w.logger = defaultLogger()
 
 	w.logger.Debug("Setting up Wrapbit instance.")
 
 	w.config = defaultConfig()
-	w.connections = make(map[string]*transport.Connection)
+
+	w.connections = make([]*transport.Connection, 2)
 	w.exchanges = make(map[string]*primitive.Exchange)
-	w.publishers = make(map[string]*Publisher)
-	w.queueBindings = make(map[string]map[string]*primitive.QueueBinding)
 	w.queues = make(map[string]*primitive.Queue)
 
-	w.logger.Debug("Applying Wrapbit options.")
+	slices.SortFunc(options, func(a, b Option) int {
+		return a.w - b.w
+	})
 
 	for _, option := range options {
-		if err := option(w); err != nil {
-			return nil, fmt.Errorf("apply Wrapbit options: %w", err)
+		if err := option.f(w); err != nil {
+			return nil, fmt.Errorf("apply Wrapbit option: %w", err)
 		}
 	}
 
-	w.connections[commonConn] = w.newConnection()
-	w.connections[publishConn] = w.newConnection()
-
 	w.logger.Debug("Wrapbit options applied.")
+
+	for i := range 2 {
+		w.connections[i] = w.newConnection()
+	}
+
+	w.logger.Debug("Wrapbit connections created.")
+
 	w.logger.Debug("Wrapbit instance set up.")
 
 	return w, nil
-}
-
-func defaultConfig() config {
-	return config{
-		clusterURIs:             nil,
-		channelRetryStrategy:    defaultChannelRetryStrategy,
-		connectionRetryStrategy: defaultConnectionRetryStrategy,
-	}
-}
-
-func defaultConnectionRetryStrategy() utils.Attempter {
-	return &attempter.ExponentialAttempter{
-		BaseBackoff: 500 * time.Millisecond,
-	}
-}
-
-func defaultChannelRetryStrategy() utils.Attempter {
-	return &attempter.LinearAttempter{
-		Backoff:     50 * time.Millisecond,
-		MaxAttempts: 10,
-	}
 }
 
 // Start establishes connections to server and declares queues, exchanges and bindings.
@@ -105,7 +83,7 @@ func (w *Wrapbit) Start() error {
 		}
 	}
 
-	ch := w.connections[commonConn].NewChannel()
+	ch := w.connections[0].NewChannel()
 
 	if err := ch.Connect(context.TODO()); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
@@ -126,21 +104,16 @@ func (w *Wrapbit) Start() error {
 	w.logger.Debug("Declaring exchanges.")
 
 	for _, e := range w.exchanges {
-		c := &e.Config
-		err = w.channel.Ch.ExchangeDeclare(c.Name, c.Kind, c.Durable, c.AutoDelete, c.Internal, c.NoWait, c.Args)
-		if err != nil {
+		if err = e.Declare(w.channel.Ch); err != nil {
 			return fmt.Errorf("declare exchange: %w", err)
 		}
 	}
 
 	w.logger.Debug("Binding queues.")
 
-	for _, qbs := range w.queueBindings {
-		for _, b := range qbs {
-			c := &b.Config
-			if err = w.channel.Ch.QueueBind(c.Name, c.Key, c.Exchange, c.NoWait, c.Args); err != nil {
-				return fmt.Errorf("binding queue: %w", err)
-			}
+	for _, b := range w.queueBindings {
+		if err = b.Declare(w.channel.Ch); err != nil {
+			return fmt.Errorf("binding queue: %w", err)
 		}
 	}
 
@@ -167,19 +140,11 @@ func (w *Wrapbit) Stop() error {
 
 // NewPublisher creates publisher with given name and [PublisherOption].
 func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publisher, error) {
-	if _, exists := w.publishers[name]; exists {
-		return nil, fmt.Errorf("publisher with name %q exists", name)
-	}
-
 	w.logger.Debug("Setting up Publisher instance.")
 
 	p := new(Publisher)
 
-	if c, ok := w.connections[publishConn]; ok {
-		p.channel = c.NewChannel()
-	} else {
-		p.channel = w.connections[commonConn].NewChannel()
-	}
+	p.channel = w.connections[1].NewChannel()
 	p.config = publisherDefaultConfig()
 	p.logger = w.logger
 
@@ -190,8 +155,6 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 			return nil, fmt.Errorf("apply Publisher options: %w", err)
 		}
 	}
-
-	w.publishers[name] = p
 
 	w.logger.Debug("Publisher instance set up.")
 
@@ -204,7 +167,7 @@ func (w *Wrapbit) NewConsumer(queueName string, options ...ConsumerOption) (*Con
 
 	c := new(Consumer)
 
-	c.channel = w.connections[commonConn].NewChannel()
+	c.channel = w.connections[0].NewChannel()
 	c.config = consumerDefaultConfig()
 	c.logger = w.logger
 	c.wrapbit = w
@@ -237,16 +200,8 @@ func (w *Wrapbit) restoreQueue(name string) error {
 		return fmt.Errorf("declare queue: %w", err)
 	}
 
-	qbs, ok := w.queueBindings[name]
-	if !ok {
-		w.logger.Debug("No %q queue bindings.")
-
-		return nil
-	}
-
-	for _, b := range qbs {
-		c := &b.Config
-		if err := w.channel.Ch.QueueBind(c.Name, c.Key, c.Exchange, c.NoWait, c.Args); err != nil {
+	for _, b := range w.queueBindings {
+		if err := b.Declare(w.channel.Ch); err != nil {
 			return fmt.Errorf("binding queue: %w", err)
 		}
 	}
@@ -266,4 +221,44 @@ func (w *Wrapbit) newConnection() *transport.Connection {
 	close(c.BlockChan)
 
 	return &c
+}
+
+func defaultChannelRetryStrategy() utils.Attempter {
+	return &attempter.LinearAttempter{
+		Backoff:     50 * time.Millisecond,
+		MaxAttempts: 10,
+	}
+}
+
+func defaultConfig() config {
+	return config{
+		clusterURIs:             nil,
+		channelRetryStrategy:    defaultChannelRetryStrategy,
+		connectionRetryStrategy: defaultConnectionRetryStrategy,
+	}
+}
+
+func defaultConnectionRetryStrategy() utils.Attempter {
+	return &attempter.ExponentialAttempter{
+		BaseBackoff: 500 * time.Millisecond,
+	}
+}
+
+func defaultLogger() utils.Logger {
+	var (
+		env   string
+		found bool
+	)
+
+	env, found = os.LookupEnv("WRAPBIT_DEBUG_LOG_LEVEL")
+
+	if !found {
+		return new(logger.NullLogger)
+	}
+
+	l := new(logger.DebugLogger)
+	level, _ := strconv.Atoi(env)
+	l.SetLevel(logger.Level(level))
+
+	return l
 }
