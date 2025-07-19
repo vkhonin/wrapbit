@@ -118,7 +118,7 @@ func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Opt
 
 			return nil
 		},
-		w: Neutral,
+		w: QueueBinding,
 	}
 }
 
