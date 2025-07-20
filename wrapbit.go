@@ -11,12 +11,8 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
-)
-
-const (
-	commonConn  = "common"
-	publishConn = "publish"
 )
 
 // Wrapbit is an instance that manages server interaction and creates [Consumer] and [Producer].
@@ -40,33 +36,23 @@ type config struct {
 func New(options ...Option) (*Wrapbit, error) {
 	w := new(Wrapbit)
 
-	w.logger = defaultLogger()
+	w.initLogger()
 
 	w.logger.Debug("Setting up Wrapbit instance.")
 
-	w.config = defaultConfig()
+	w.initFields()
 
-	w.connections = make([]*transport.Connection, 2)
-	w.exchanges = make(map[string]*primitive.Exchange)
-	w.queues = make(map[string]*primitive.Queue)
+	w.logger.Debug("Applying Wrapbit options.")
 
-	slices.SortFunc(options, func(a, b Option) int {
-		return a.w - b.w
-	})
-
-	for _, option := range options {
-		if err := option.f(w); err != nil {
-			return nil, fmt.Errorf("apply Wrapbit option: %w", err)
-		}
+	if err := w.applyOptions(options); err != nil {
+		return nil, fmt.Errorf("apply Wrapbit options: %w", err)
 	}
 
-	w.logger.Debug("Wrapbit options applied.")
+	w.logger.Debug("Creating connections.")
 
 	for i := range 2 {
 		w.connections[i] = w.newConnection()
 	}
-
-	w.logger.Debug("Wrapbit connections created.")
 
 	w.logger.Debug("Wrapbit instance set up.")
 
@@ -76,6 +62,8 @@ func New(options ...Option) (*Wrapbit, error) {
 // Start establishes connections to server and declares queues, exchanges and bindings.
 func (w *Wrapbit) Start() error {
 	w.logger.Debug("Starting Wrapbit instance.")
+
+	w.logger.Debug("Establishing connections.")
 
 	for _, conn := range w.connections {
 		if err := conn.Connect(); err != nil {
@@ -190,6 +178,76 @@ func (w *Wrapbit) NewConsumer(queueName string, options ...ConsumerOption) (*Con
 	return c, nil
 }
 
+func (w *Wrapbit) applyOptions(opts []Option) error {
+	slices.SortFunc(opts, func(a, b Option) int {
+		return a.w - b.w
+	})
+
+	for _, opt := range opts {
+		if err := opt.f(w); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (w *Wrapbit) initFields() {
+	w.config = config{
+		clusterURIs: nil,
+		channelRetryStrategy: func() utils.Attempter {
+			return &attempter.LinearAttempter{
+				Backoff:     50 * time.Millisecond,
+				MaxAttempts: 10,
+			}
+		},
+		connectionRetryStrategy: func() utils.Attempter {
+			return &attempter.ExponentialAttempter{
+				BaseBackoff: 500 * time.Millisecond,
+			}
+		},
+	}
+	w.connections = make([]*transport.Connection, 2)
+	w.exchanges = make(map[string]*primitive.Exchange)
+	w.queues = make(map[string]*primitive.Queue)
+}
+
+func (w *Wrapbit) initLogger() {
+	var (
+		env   string
+		found bool
+	)
+
+	env, found = os.LookupEnv("WRAPBIT_DEBUG_LOG_LEVEL")
+
+	if !found {
+		w.logger = new(logger.NullLogger)
+
+		return
+	}
+
+	l := new(logger.DebugLogger)
+	level, _ := strconv.Atoi(env)
+	l.SetLevel(logger.Level(level))
+
+	w.logger = l
+}
+
+func (w *Wrapbit) newConnection() *transport.Connection {
+	c := transport.Connection{
+		BlockCond: sync.NewCond(&sync.Mutex{}),
+		ChRetry:   w.config.channelRetryStrategy,
+		Logger:    w.logger,
+		Retry:     w.config.connectionRetryStrategy,
+		URIs:      w.config.clusterURIs,
+	}
+
+	return &c
+}
+
+// restoreQueue restores queue and its bindings by name.
+//
+// TODO: should be refactored.
 func (w *Wrapbit) restoreQueue(name string) error {
 	q, ok := w.queues[name]
 	if !ok {
@@ -207,58 +265,4 @@ func (w *Wrapbit) restoreQueue(name string) error {
 	}
 
 	return nil
-}
-
-func (w *Wrapbit) newConnection() *transport.Connection {
-	c := transport.Connection{
-		BlockChan: make(chan struct{}),
-		ChRetry:   w.config.channelRetryStrategy,
-		Logger:    w.logger,
-		Retry:     w.config.connectionRetryStrategy,
-		URIs:      w.config.clusterURIs,
-	}
-
-	close(c.BlockChan)
-
-	return &c
-}
-
-func defaultChannelRetryStrategy() utils.Attempter {
-	return &attempter.LinearAttempter{
-		Backoff:     50 * time.Millisecond,
-		MaxAttempts: 10,
-	}
-}
-
-func defaultConfig() config {
-	return config{
-		clusterURIs:             nil,
-		channelRetryStrategy:    defaultChannelRetryStrategy,
-		connectionRetryStrategy: defaultConnectionRetryStrategy,
-	}
-}
-
-func defaultConnectionRetryStrategy() utils.Attempter {
-	return &attempter.ExponentialAttempter{
-		BaseBackoff: 500 * time.Millisecond,
-	}
-}
-
-func defaultLogger() utils.Logger {
-	var (
-		env   string
-		found bool
-	)
-
-	env, found = os.LookupEnv("WRAPBIT_DEBUG_LOG_LEVEL")
-
-	if !found {
-		return new(logger.NullLogger)
-	}
-
-	l := new(logger.DebugLogger)
-	level, _ := strconv.Atoi(env)
-	l.SetLevel(logger.Level(level))
-
-	return l
 }

@@ -73,13 +73,9 @@ func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 		}
 	}
 
-	p.logger.Debug("Checking block before publish.")
-
-	p.channel.WaitBlocked()
-
 	p.logger.Debug("Publishing.")
 
-	if err := p.channel.Ch.Publish(
+	if err := p.channel.Publish(
 		p.config.exchange,
 		p.config.routingKey,
 		p.config.mandatory,

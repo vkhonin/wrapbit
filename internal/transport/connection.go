@@ -9,35 +9,26 @@ import (
 )
 
 type Connection struct {
-	BlockChan chan struct{}
-	ChRetry   utils.Retry
-	Logger    utils.Logger
-	Retry     utils.Retry
-	URIs      []string
+	ChRetry utils.Retry
+	Logger  utils.Logger
+	Retry   utils.Retry
+	URIs    []string
 
-	blockMu sync.RWMutex
-	connMu  sync.RWMutex
-	conn    *amqp.Connection
-}
-
-func (c *Connection) channel() (*amqp.Channel, error) {
-	c.connMu.RLock()
-	defer c.connMu.RUnlock()
-	return c.conn.Channel()
+	BlockCond *sync.Cond
+	blocked   bool
+	connMu    sync.RWMutex
+	conn      *amqp.Connection
 }
 
 func (c *Connection) Connect() error {
-	c.Logger.Debug("Setting up connection.")
-
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 
-	conn, err := c.dial()
-	if err != nil {
+	c.Logger.Debug("Setting up connection.")
+
+	if err := c.dial(); err != nil {
 		return fmt.Errorf("establish connection: %w", err)
 	}
-
-	c.conn = conn
 
 	c.Logger.Debug("Setting up connection notifications.")
 
@@ -52,34 +43,6 @@ func (c *Connection) Connect() error {
 	c.Logger.Debug("Connection set up.")
 
 	return nil
-}
-
-func (c *Connection) dial() (*amqp.Connection, error) {
-	if len(c.URIs) == 0 {
-		return nil, errors.New("no URIs to connect")
-	}
-
-	var (
-		conn *amqp.Connection
-		err  error
-		errs []error
-	)
-
-	for a := c.Retry(); a.Attempt(); {
-		for _, uri := range c.URIs {
-			c.Logger.Debug("Dialing.", uri)
-
-			if conn, err = amqp.Dial(uri); err == nil {
-				return conn, nil
-			}
-
-			c.Logger.Warn("Dial error.", uri, err)
-
-			errs = append(errs, err)
-		}
-	}
-
-	return nil, errors.Join(errs...)
 }
 
 func (c *Connection) Disconnect() error {
@@ -103,26 +66,67 @@ func (c *Connection) Disconnect() error {
 	return nil
 }
 
-func (c *Connection) handleBlock(blockCh <-chan amqp.Blocking) {
-	// Closes blockChan if not closed yet, so that waiting instances will not hang forever.
-	c.blockMu.Lock()
-	select {
-	case <-c.BlockChan:
-	default:
-		if c.BlockChan != nil {
-			close(c.BlockChan)
+func (c *Connection) NewChannel() *Channel {
+	return &Channel{
+		chMu:   new(sync.RWMutex),
+		conn:   c,
+		logger: c.Logger,
+		retry:  c.ChRetry,
+	}
+}
+
+func (c *Connection) block(value bool) {
+	c.BlockCond.L.Lock()
+	c.blocked = value
+	c.BlockCond.L.Unlock()
+	c.BlockCond.Broadcast()
+}
+
+func (c *Connection) channel() (*amqp.Channel, error) {
+	c.connMu.RLock()
+	defer c.connMu.RUnlock()
+	return c.conn.Channel()
+}
+
+// dial tries to establish connection to server using [Connection.Retry] strategy.
+func (c *Connection) dial() error {
+	if len(c.URIs) == 0 {
+		return errors.New("no URIs to connect")
+	}
+
+	var (
+		conn *amqp.Connection
+		err  error
+		errs []error
+	)
+
+	for a := c.Retry(); a.Attempt(); {
+		for _, uri := range c.URIs {
+			c.Logger.Debug("Dialing.", uri)
+
+			conn, err = amqp.Dial(uri)
+
+			if err == nil {
+				c.conn = conn
+
+				return nil
+			}
+
+			c.Logger.Warn("Dial error.", uri, err)
+
+			errs = append(errs, err)
 		}
 	}
-	c.blockMu.Unlock()
+
+	return errors.Join(errs...)
+}
+
+func (c *Connection) handleBlock(blockCh <-chan amqp.Blocking) {
+	c.block(false)
 
 	for blocking := range blockCh {
-		c.blockMu.Lock()
-		if blocking.Active {
-			c.BlockChan = make(chan struct{})
-		} else {
-			close(c.BlockChan)
-		}
-		c.blockMu.Unlock()
+		c.Logger.Warn("Connection (un)block.", blocking)
+		c.block(blocking.Active)
 	}
 }
 
@@ -130,21 +134,7 @@ func (c *Connection) handleClose(closeCh <-chan *amqp.Error) {
 	// TODO: This will run once on non graceful connection close. If c.connect() fails and returns error, it will
 	// not be known and everything will hang forever (until manual c.Start()). So this should be handled properly.
 	if err := <-closeCh; err != nil {
+		c.Logger.Warn("Connection closed.", err)
 		_ = c.Connect()
 	}
-}
-
-func (c *Connection) NewChannel() *Channel {
-	return &Channel{
-		conn:   c,
-		logger: c.Logger,
-		retry:  c.ChRetry,
-	}
-}
-
-func (c *Connection) waitBlocked() {
-	c.blockMu.RLock()
-	ch := c.BlockChan
-	c.blockMu.RUnlock()
-	<-ch
 }

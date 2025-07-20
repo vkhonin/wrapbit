@@ -6,12 +6,14 @@ import (
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/vkhonin/wrapbit/utils"
+	"sync"
 )
 
 type Channel struct {
 	CancelHandler func(tag string) error
-	Ch            *amqp.Channel
 
+	chMu   *sync.RWMutex
+	Ch     *amqp.Channel
 	conn   *Connection
 	logger utils.Logger
 	retry  utils.Retry
@@ -71,8 +73,33 @@ func (c *Channel) Disconnect() error {
 	return nil
 }
 
-func (c *Channel) WaitBlocked() {
-	c.conn.waitBlocked()
+func (c *Channel) Publish(exchange, routingKey string, mandatory, immediate bool, msg amqp.Publishing) error {
+	// TODO: Should be replaced with local 'blocked' once 'handleBlock' implemented.
+	c.conn.BlockCond.L.Lock()
+	for c.conn.blocked {
+		c.logger.Warn("Publishing blocked.")
+		c.conn.BlockCond.Wait()
+		c.logger.Debug("Publishing unblocked.")
+	}
+	c.conn.BlockCond.L.Unlock()
+
+	// TODO: We can lose some messages here, close notification likely to be received later than channel is actually
+	// closed. In such a case, we need to repeat publishing. We either have to check for ErrClosed or for some kind
+	// of our implementation of transient error. In any case, this should be done in Publisher, not in Channel, because
+	// Publisher should be responsible on handling such errors.
+	c.chMu.RLock()
+	defer c.chMu.RUnlock()
+	if err := c.Ch.Publish(
+		exchange,
+		routingKey,
+		mandatory,
+		immediate,
+		msg,
+	); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *Channel) handleAll(ctx context.Context) {
@@ -111,8 +138,14 @@ func (c *Channel) handleCancel(_ context.Context, ch <-chan string) {
 	c.logger.Debug("Cancel handler stopped.")
 }
 
-func (c *Channel) handleClose(_ context.Context, ch <-chan *amqp.Error) {
+func (c *Channel) handleClose(ctx context.Context, ch <-chan *amqp.Error) {
 	for err := range ch {
+		c.logger.Debug("Close channel received.")
+		c.chMu.Lock()
+		if connErr := c.Connect(ctx); connErr != nil {
+			c.logger.Warn("Channel connection error.", connErr)
+		}
+		c.chMu.Unlock()
 		c.logger.Debug("Close handled.", err)
 	}
 
