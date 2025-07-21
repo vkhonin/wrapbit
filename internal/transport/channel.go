@@ -20,6 +20,13 @@ type Channel struct {
 }
 
 func (c *Channel) Connect(ctx context.Context) error {
+	c.chMu.Lock()
+	defer c.chMu.Unlock()
+
+	if c.Ch != nil {
+		_ = c.Ch.Close()
+	}
+
 	var (
 		ch   *amqp.Channel
 		err  error
@@ -139,17 +146,18 @@ func (c *Channel) handleCancel(_ context.Context, ch <-chan string) {
 }
 
 func (c *Channel) handleClose(ctx context.Context, ch <-chan *amqp.Error) {
-	for err := range ch {
-		c.logger.Debug("Close channel received.")
-		c.chMu.Lock()
-		if connErr := c.Connect(ctx); connErr != nil {
-			c.logger.Warn("Channel connection error.", connErr)
-		}
-		c.chMu.Unlock()
-		c.logger.Debug("Close handled.", err)
+	err := <-ch
+	if err == nil {
+		return
 	}
 
-	c.logger.Debug("Close handler stopped.")
+	c.logger.Warn("Channel closed with error.", err)
+
+	if connErr := c.Connect(ctx); connErr != nil {
+		c.logger.Warn("Channel connection error.", connErr)
+	}
+
+	c.logger.Debug("Close handled.", err)
 }
 
 func (c *Channel) handleFlow(_ context.Context, ch <-chan bool) {
