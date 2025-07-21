@@ -155,7 +155,7 @@ func (c *channel) handleClose(ctx context.Context, ch <-chan *amqp.Error) {
 		c.logger.Warn("Channel connection error.", connErr)
 	}
 
-	c.logger.Debug("Close handled.", err)
+	c.logger.Debug("Channel close handled.", err)
 }
 
 func (c *channel) handleFlow(_ context.Context, ch <-chan bool) {

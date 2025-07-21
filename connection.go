@@ -1,6 +1,7 @@
 package wrapbit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -18,9 +19,13 @@ type connection struct {
 	uris      []string
 }
 
-func (c *connection) connect() error {
+func (c *connection) connect(ctx context.Context) error {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
+
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
 
 	c.logger.Debug("Setting up connection.")
 
@@ -35,8 +40,8 @@ func (c *connection) connect() error {
 		closeCh <-chan *amqp.Error   = c.conn.NotifyClose(make(chan *amqp.Error, 1))
 	)
 
-	go c.handleBlock(blockCh)
-	go c.handleClose(closeCh)
+	go c.handleBlock(ctx, blockCh)
+	go c.handleClose(ctx, closeCh)
 
 	c.logger.Debug("Connection set up.")
 
@@ -119,20 +124,26 @@ func (c *connection) dial() error {
 	return errors.Join(errs...)
 }
 
-func (c *connection) handleBlock(blockCh <-chan amqp.Blocking) {
+func (c *connection) handleBlock(_ context.Context, ch <-chan amqp.Blocking) {
 	c.block(false)
 
-	for blocking := range blockCh {
+	for blocking := range ch {
 		c.logger.Warn("Connection (un)block.", blocking)
 		c.block(blocking.Active)
 	}
 }
 
-func (c *connection) handleClose(closeCh <-chan *amqp.Error) {
-	// TODO: This will run once on non graceful connection close. If c.connect() fails and returns error, it will
-	// not be known and everything will hang forever (until manual c.Start()). So this should be handled properly.
-	if err := <-closeCh; err != nil {
-		c.logger.Warn("Connection closed.", err)
-		_ = c.connect()
+func (c *connection) handleClose(ctx context.Context, ch <-chan *amqp.Error) {
+	err := <-ch
+	if err == nil {
+		return
 	}
+
+	c.logger.Warn("Connection closed with error.", err)
+
+	if connErr := c.connect(ctx); connErr != nil {
+		c.logger.Warn("Connection establish error.", connErr)
+	}
+
+	c.logger.Debug("Connection close handled.", err)
 }

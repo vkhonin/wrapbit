@@ -61,7 +61,7 @@ func (w *Wrapbit) Start() error {
 	w.logger.Debug("Establishing connections.")
 
 	for _, conn := range w.connections {
-		if err := conn.connect(); err != nil {
+		if err := conn.connect(context.TODO()); err != nil {
 			return err
 		}
 	}
