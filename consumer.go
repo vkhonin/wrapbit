@@ -4,9 +4,6 @@ import (
 	"context"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/vkhonin/wrapbit/internal/primitive"
-	"github.com/vkhonin/wrapbit/internal/transport"
-	"github.com/vkhonin/wrapbit/utils"
 )
 
 const (
@@ -17,12 +14,12 @@ const (
 
 // Consumer is an instance that consumes from its designated queue.
 type Consumer struct {
-	channel         *transport.Channel
+	channel         *channel
 	closeChannel    <-chan *amqp.Error
 	config          consumerConfig
 	deliveryChannel <-chan amqp.Delivery
 	errorChannel    chan error
-	logger          utils.Logger
+	logger          Logger
 	wrapbit         *Wrapbit
 }
 
@@ -35,7 +32,7 @@ type consumerConfig struct {
 	noLocal       bool
 	noWait        bool
 	prefetchCount int
-	queue         *primitive.Queue
+	queue         *queue
 }
 
 // Handler is a function supplied to [Consumer] and used to handle [Delivery]. It should return [Response] depending on
@@ -72,30 +69,30 @@ func (c *Consumer) Start(handler Handler) error {
 
 	c.logger.Debug("Setting up consumer.")
 
-	c.channel.CancelHandler = func(tag string) error {
+	c.channel.cancelHandler = func(tag string) error {
 		return c.Start(handler)
 	}
 
-	if err = c.channel.Connect(context.TODO()); err != nil {
+	if err = c.channel.connect(context.TODO()); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 
 	c.logger.Debug("Declaring QoS.")
 
-	if err = c.channel.Ch.Qos(c.config.prefetchCount, 0, false); err != nil {
+	if err = c.channel.ch.Qos(c.config.prefetchCount, 0, false); err != nil {
 		return fmt.Errorf("setting QoS: %w", err)
 	}
 
 	c.logger.Debug("Declaring queue and bindings.")
 
-	if err = c.wrapbit.restoreQueue(c.config.queue.Queue.Name); err != nil {
+	if err = c.wrapbit.restoreQueue(c.config.queue.queue.Name); err != nil {
 		return fmt.Errorf("declaring queue: %w", err)
 	}
 
 	c.logger.Debug("Declaring consume.")
 
-	c.deliveryChannel, err = c.channel.Ch.Consume(
-		c.config.queue.Queue.Name,
+	c.deliveryChannel, err = c.channel.ch.Consume(
+		c.config.queue.queue.Name,
 		c.config.consumer,
 		c.config.autoAck,
 		c.config.exclusive,
@@ -109,7 +106,7 @@ func (c *Consumer) Start(handler Handler) error {
 
 	c.logger.Debug("Setting up channel notifications.")
 
-	c.closeChannel = c.channel.Ch.NotifyClose(make(chan *amqp.Error))
+	c.closeChannel = c.channel.ch.NotifyClose(make(chan *amqp.Error))
 
 	c.logger.Debug("Start consuming.")
 
@@ -124,7 +121,7 @@ func (c *Consumer) Start(handler Handler) error {
 func (c *Consumer) Stop() error {
 	c.logger.Debug("Stopping publisher.")
 
-	if err := c.channel.Disconnect(); err != nil {
+	if err := c.channel.disconnect(); err != nil {
 		return err
 	}
 

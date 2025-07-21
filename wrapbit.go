@@ -3,11 +3,6 @@ package wrapbit
 import (
 	"context"
 	"fmt"
-	"github.com/vkhonin/wrapbit/internal/attempter"
-	"github.com/vkhonin/wrapbit/internal/logger"
-	"github.com/vkhonin/wrapbit/internal/primitive"
-	"github.com/vkhonin/wrapbit/internal/transport"
-	"github.com/vkhonin/wrapbit/utils"
 	"os"
 	"slices"
 	"strconv"
@@ -17,19 +12,19 @@ import (
 
 // Wrapbit is an instance that manages server interaction and creates [Consumer] and [Producer].
 type Wrapbit struct {
-	channel       *transport.Channel
+	channel       *channel
 	config        config
-	connections   []*transport.Connection
-	exchanges     map[string]*primitive.Exchange
-	logger        utils.Logger
-	queueBindings []*primitive.QueueBinding
-	queues        map[string]*primitive.Queue
+	connections   []*connection
+	exchanges     map[string]*exchange
+	logger        Logger
+	queueBindings []*queueBinding
+	queues        map[string]*queue
 }
 
 type config struct {
 	clusterURIs             []string
-	channelRetryStrategy    utils.Retry
-	connectionRetryStrategy utils.Retry
+	channelRetryStrategy    Retry
+	connectionRetryStrategy Retry
 }
 
 // New creates [Wrapbit] instance with given [Option].
@@ -66,14 +61,14 @@ func (w *Wrapbit) Start() error {
 	w.logger.Debug("Establishing connections.")
 
 	for _, conn := range w.connections {
-		if err := conn.Connect(); err != nil {
+		if err := conn.connect(); err != nil {
 			return err
 		}
 	}
 
-	ch := w.connections[0].NewChannel()
+	ch := w.connections[0].newChannel()
 
-	if err := ch.Connect(context.TODO()); err != nil {
+	if err := ch.connect(context.TODO()); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 
@@ -84,7 +79,7 @@ func (w *Wrapbit) Start() error {
 	var err error
 
 	for _, q := range w.queues {
-		if err = q.Declare(w.channel.Ch); err != nil {
+		if err = q.declare(w.channel.ch); err != nil {
 			return fmt.Errorf("declare queue: %w", err)
 		}
 	}
@@ -92,7 +87,7 @@ func (w *Wrapbit) Start() error {
 	w.logger.Debug("Declaring exchanges.")
 
 	for _, e := range w.exchanges {
-		if err = e.Declare(w.channel.Ch); err != nil {
+		if err = e.declare(w.channel.ch); err != nil {
 			return fmt.Errorf("declare exchange: %w", err)
 		}
 	}
@@ -100,7 +95,7 @@ func (w *Wrapbit) Start() error {
 	w.logger.Debug("Binding queues.")
 
 	for _, b := range w.queueBindings {
-		if err = b.Declare(w.channel.Ch); err != nil {
+		if err = b.declare(w.channel.ch); err != nil {
 			return fmt.Errorf("binding queue: %w", err)
 		}
 	}
@@ -116,7 +111,7 @@ func (w *Wrapbit) Stop() error {
 
 	// TODO: when NotifyPublish will be implemented, we should wait for all Confirmations before closing Connection.
 	for _, conn := range w.connections {
-		if err := conn.Disconnect(); err != nil {
+		if err := conn.disconnect(); err != nil {
 			return fmt.Errorf("wrapbit stop: %w", err)
 		}
 	}
@@ -132,7 +127,7 @@ func (w *Wrapbit) NewPublisher(name string, options ...PublisherOption) (*Publis
 
 	p := new(Publisher)
 
-	p.channel = w.connections[1].NewChannel()
+	p.channel = w.connections[1].newChannel()
 	p.config = publisherDefaultConfig()
 	p.logger = w.logger
 
@@ -155,7 +150,7 @@ func (w *Wrapbit) NewConsumer(queueName string, options ...ConsumerOption) (*Con
 
 	c := new(Consumer)
 
-	c.channel = w.connections[0].NewChannel()
+	c.channel = w.connections[0].newChannel()
 	c.config = consumerDefaultConfig()
 	c.logger = w.logger
 	c.wrapbit = w
@@ -195,21 +190,21 @@ func (w *Wrapbit) applyOptions(opts []Option) error {
 func (w *Wrapbit) initFields() {
 	w.config = config{
 		clusterURIs: nil,
-		channelRetryStrategy: func() utils.Attempter {
-			return &attempter.LinearAttempter{
-				Backoff:     50 * time.Millisecond,
-				MaxAttempts: 10,
+		channelRetryStrategy: func() Attempter {
+			return &linearAttempter{
+				backoff:     50 * time.Millisecond,
+				maxAttempts: 10,
 			}
 		},
-		connectionRetryStrategy: func() utils.Attempter {
-			return &attempter.ExponentialAttempter{
-				BaseBackoff: 500 * time.Millisecond,
+		connectionRetryStrategy: func() Attempter {
+			return &exponentialAttempter{
+				baseBackoff: 500 * time.Millisecond,
 			}
 		},
 	}
-	w.connections = make([]*transport.Connection, 2)
-	w.exchanges = make(map[string]*primitive.Exchange)
-	w.queues = make(map[string]*primitive.Queue)
+	w.connections = make([]*connection, 2)
+	w.exchanges = make(map[string]*exchange)
+	w.queues = make(map[string]*queue)
 }
 
 func (w *Wrapbit) initLogger() {
@@ -221,25 +216,25 @@ func (w *Wrapbit) initLogger() {
 	env, found = os.LookupEnv("WRAPBIT_DEBUG_LOG_LEVEL")
 
 	if !found {
-		w.logger = new(logger.NullLogger)
+		w.logger = new(nullLogger)
 
 		return
 	}
 
-	l := new(logger.DebugLogger)
-	level, _ := strconv.Atoi(env)
-	l.SetLevel(logger.Level(level))
+	l := new(debugLogger)
+	lvl, _ := strconv.Atoi(env)
+	l.setLevel(level(lvl))
 
 	w.logger = l
 }
 
-func (w *Wrapbit) newConnection() *transport.Connection {
-	c := transport.Connection{
-		BlockCond: sync.NewCond(&sync.Mutex{}),
-		ChRetry:   w.config.channelRetryStrategy,
-		Logger:    w.logger,
-		Retry:     w.config.connectionRetryStrategy,
-		URIs:      w.config.clusterURIs,
+func (w *Wrapbit) newConnection() *connection {
+	c := connection{
+		blockCond: sync.NewCond(&sync.Mutex{}),
+		chRetry:   w.config.channelRetryStrategy,
+		logger:    w.logger,
+		retry:     w.config.connectionRetryStrategy,
+		uris:      w.config.clusterURIs,
 	}
 
 	return &c
@@ -254,12 +249,12 @@ func (w *Wrapbit) restoreQueue(name string) error {
 		return fmt.Errorf("no %q queue", name)
 	}
 
-	if err := q.Declare(w.channel.Ch); err != nil {
+	if err := q.declare(w.channel.ch); err != nil {
 		return fmt.Errorf("declare queue: %w", err)
 	}
 
 	for _, b := range w.queueBindings {
-		if err := b.Declare(w.channel.Ch); err != nil {
+		if err := b.declare(w.channel.ch); err != nil {
 			return fmt.Errorf("binding queue: %w", err)
 		}
 	}

@@ -4,15 +4,13 @@ import (
 	"context"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/vkhonin/wrapbit/internal/transport"
-	"github.com/vkhonin/wrapbit/utils"
 )
 
 // Publisher is an instance that publishes to its designated exchange.
 type Publisher struct {
-	channel *transport.Channel
+	channel *channel
 	config  publisherConfig
-	logger  utils.Logger
+	logger  Logger
 }
 
 type publisherConfig struct {
@@ -35,11 +33,11 @@ func publisherDefaultConfig() publisherConfig {
 func (p *Publisher) Start() error {
 	p.logger.Debug("Setting up publisher.")
 
-	if err := p.channel.Connect(context.TODO()); err != nil {
+	if err := p.channel.connect(context.TODO()); err != nil {
 		return fmt.Errorf("establish channel: %w", err)
 	}
 
-	if err := p.channel.Ch.Confirm(false); err != nil {
+	if err := p.channel.ch.Confirm(false); err != nil {
 		return fmt.Errorf("channel confirm: %w", err)
 	}
 
@@ -52,7 +50,7 @@ func (p *Publisher) Start() error {
 func (p *Publisher) Stop() error {
 	p.logger.Debug("Stopping publisher.")
 
-	if err := p.channel.Disconnect(); err != nil {
+	if err := p.channel.disconnect(); err != nil {
 		return err
 	}
 
@@ -75,7 +73,7 @@ func (p *Publisher) Publish(data []byte, options ...PublisherOption) error {
 
 	p.logger.Debug("Publishing.")
 
-	if err := p.channel.Publish(
+	if err := p.channel.publish(
 		p.config.exchange,
 		p.config.routingKey,
 		p.config.mandatory,

@@ -2,13 +2,12 @@ package wrapbit
 
 import (
 	"fmt"
-	"github.com/vkhonin/wrapbit/internal/primitive"
 	"slices"
 )
 
 const (
-	Neutral = iota
-	QueueBinding
+	neutralW = iota
+	queueBindingW
 )
 
 // Option is a function that applies when [Wrapbit] instance is created and changes its settings.
@@ -18,17 +17,17 @@ type Option struct {
 }
 
 // ExchangeOption is a function that applies when exchange is created and changes its settings.
-type ExchangeOption func(q *primitive.Exchange) error
+type ExchangeOption func(q *exchange) error
 
 // WithExchange will declare exchange with given name and options on [Wrapbit.Start]. If no [ExchangeOption] supplied,
 // durable direct exchange with given name will be declared.
 func WithExchange(name string, options ...ExchangeOption) Option {
 	return Option{
 		f: func(w *Wrapbit) error {
-			e := new(primitive.Exchange)
+			e := new(exchange)
 
-			e.Config = primitive.ExchangeDefaultConfig()
-			e.Config.Name = name
+			e.config = exchangeDefaultConfig()
+			e.config.name = name
 
 			for _, option := range options {
 				if err := option(e); err != nil {
@@ -40,7 +39,7 @@ func WithExchange(name string, options ...ExchangeOption) Option {
 
 			return nil
 		},
-		w: Neutral,
+		w: neutralW,
 	}
 }
 
@@ -55,7 +54,7 @@ func WithNode(newURI string) Option {
 
 			return nil
 		},
-		w: Neutral,
+		w: neutralW,
 	}
 }
 
@@ -64,10 +63,10 @@ func WithNode(newURI string) Option {
 func WithQueue(name string, options ...QueueOption) Option {
 	return Option{
 		f: func(w *Wrapbit) error {
-			q := new(primitive.Queue)
+			q := new(queue)
 
-			q.Config = primitive.QueueDefaultConfig()
-			q.Config.Name = name
+			q.config = queueDefaultConfig()
+			q.config.name = name
 
 			for _, option := range options {
 				if err := option(q); err != nil {
@@ -83,7 +82,7 @@ func WithQueue(name string, options ...QueueOption) Option {
 
 			return nil
 		},
-		w: Neutral,
+		w: neutralW,
 	}
 }
 
@@ -92,18 +91,18 @@ func WithQueue(name string, options ...QueueOption) Option {
 func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Option {
 	return Option{
 		f: func(w *Wrapbit) error {
-			b := new(primitive.QueueBinding)
+			b := new(queueBinding)
 
-			b.Config = primitive.QueueBindingDefaultConfig()
+			b.config = queueBindingDefaultConfig()
 
 			var ok bool
 
-			b.Config.Queue, ok = w.queues[queue]
+			b.config.queue, ok = w.queues[queue]
 			if !ok {
 				return fmt.Errorf("no %q queue", queue)
 			}
 
-			b.Config.Exchange, ok = w.exchanges[exchange]
+			b.config.exchange, ok = w.exchanges[exchange]
 			if !ok {
 				return fmt.Errorf("no %q exchange", exchange)
 			}
@@ -118,7 +117,7 @@ func WithQueueBinding(queue, exchange string, options ...QueueBindingOption) Opt
 
 			return nil
 		},
-		w: QueueBinding,
+		w: queueBindingW,
 	}
 }
 
@@ -166,15 +165,15 @@ func WithPrefetchCount(n int) ConsumerOption {
 }
 
 // QueueOption is a function that applies when queue is created and changes its settings.
-type QueueOption func(q *primitive.Queue) error
+type QueueOption func(q *queue) error
 
 // QueueBindingOption is a function that applies when queue is being bound to exchange and changes binding settings.
-type QueueBindingOption func(q *primitive.QueueBinding) error
+type QueueBindingOption func(q *queueBinding) error
 
 // WithQueueBindingRoutingKey sets routing key for queue to exchange binding.
 func WithQueueBindingRoutingKey(key string) QueueBindingOption {
-	return func(b *primitive.QueueBinding) error {
-		b.Config.Key = key
+	return func(b *queueBinding) error {
+		b.config.key = key
 
 		return nil
 	}

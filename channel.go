@@ -1,30 +1,28 @@
-package transport
+package wrapbit
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/vkhonin/wrapbit/utils"
 	"sync"
 )
 
-type Channel struct {
-	CancelHandler func(tag string) error
-
-	chMu   *sync.RWMutex
-	Ch     *amqp.Channel
-	conn   *Connection
-	logger utils.Logger
-	retry  utils.Retry
+type channel struct {
+	cancelHandler func(tag string) error
+	chMu          *sync.RWMutex
+	ch            *amqp.Channel
+	conn          *connection
+	logger        Logger
+	retry         Retry
 }
 
-func (c *Channel) Connect(ctx context.Context) error {
+func (c *channel) connect(ctx context.Context) error {
 	c.chMu.Lock()
 	defer c.chMu.Unlock()
 
-	if c.Ch != nil {
-		_ = c.Ch.Close()
+	if c.ch != nil {
+		_ = c.ch.Close()
 	}
 
 	var (
@@ -53,7 +51,7 @@ func (c *Channel) Connect(ctx context.Context) error {
 		return fmt.Errorf("establish channel: %w", errors.Join(errs...))
 	}
 
-	c.Ch = ch
+	c.ch = ch
 
 	c.handleAll(ctx)
 
@@ -62,8 +60,8 @@ func (c *Channel) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (c *Channel) Disconnect() error {
-	if c.Ch == nil {
+func (c *channel) disconnect() error {
+	if c.ch == nil {
 		c.logger.Debug("Channel not connected.")
 
 		return nil
@@ -71,7 +69,7 @@ func (c *Channel) Disconnect() error {
 
 	c.logger.Debug("Disconnecting channel.")
 
-	if err := c.Ch.Close(); err != nil {
+	if err := c.ch.Close(); err != nil {
 		return fmt.Errorf("close channel: %w", err)
 	}
 
@@ -80,15 +78,15 @@ func (c *Channel) Disconnect() error {
 	return nil
 }
 
-func (c *Channel) Publish(exchange, routingKey string, mandatory, immediate bool, msg amqp.Publishing) error {
+func (c *channel) publish(exchange, routingKey string, mandatory, immediate bool, msg amqp.Publishing) error {
 	// TODO: Should be replaced with local 'blocked' once 'handleBlock' implemented.
-	c.conn.BlockCond.L.Lock()
+	c.conn.blockCond.L.Lock()
 	for c.conn.blocked {
 		c.logger.Warn("Publishing blocked.")
-		c.conn.BlockCond.Wait()
+		c.conn.blockCond.Wait()
 		c.logger.Debug("Publishing unblocked.")
 	}
-	c.conn.BlockCond.L.Unlock()
+	c.conn.blockCond.L.Unlock()
 
 	// TODO: We can lose some messages here, close notification likely to be received later than channel is actually
 	// closed. In such a case, we need to repeat publishing. We either have to check for ErrClosed or for some kind
@@ -96,7 +94,7 @@ func (c *Channel) Publish(exchange, routingKey string, mandatory, immediate bool
 	// Publisher should be responsible on handling such errors.
 	c.chMu.RLock()
 	defer c.chMu.RUnlock()
-	if err := c.Ch.Publish(
+	if err := c.ch.Publish(
 		exchange,
 		routingKey,
 		mandatory,
@@ -109,13 +107,13 @@ func (c *Channel) Publish(exchange, routingKey string, mandatory, immediate bool
 	return nil
 }
 
-func (c *Channel) handleAll(ctx context.Context) {
+func (c *channel) handleAll(ctx context.Context) {
 	var (
-		cancelCh  <-chan string            = c.Ch.NotifyCancel(make(chan string, 1))
-		closeCh   <-chan *amqp.Error       = c.Ch.NotifyClose(make(chan *amqp.Error, 1))
-		flowCh    <-chan bool              = c.Ch.NotifyFlow(make(chan bool, 1))
-		publishCh <-chan amqp.Confirmation = c.Ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-		returnCh  <-chan amqp.Return       = c.Ch.NotifyReturn(make(chan amqp.Return, 1))
+		cancelCh  <-chan string            = c.ch.NotifyCancel(make(chan string, 1))
+		closeCh   <-chan *amqp.Error       = c.ch.NotifyClose(make(chan *amqp.Error, 1))
+		flowCh    <-chan bool              = c.ch.NotifyFlow(make(chan bool, 1))
+		publishCh <-chan amqp.Confirmation = c.ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+		returnCh  <-chan amqp.Return       = c.ch.NotifyReturn(make(chan amqp.Return, 1))
 	)
 
 	go c.handleCancel(ctx, cancelCh)
@@ -125,15 +123,15 @@ func (c *Channel) handleAll(ctx context.Context) {
 	go c.handleReturn(ctx, returnCh)
 }
 
-func (c *Channel) handleCancel(_ context.Context, ch <-chan string) {
+func (c *channel) handleCancel(_ context.Context, ch <-chan string) {
 	for tag := range ch {
-		if c.CancelHandler == nil {
+		if c.cancelHandler == nil {
 			c.logger.Debug("Cancel handler not set.")
 
 			continue
 		}
 
-		if err := c.CancelHandler(tag); err != nil {
+		if err := c.cancelHandler(tag); err != nil {
 			c.logger.Warn("Cancel handler error.", err)
 
 			continue
@@ -145,7 +143,7 @@ func (c *Channel) handleCancel(_ context.Context, ch <-chan string) {
 	c.logger.Debug("Cancel handler stopped.")
 }
 
-func (c *Channel) handleClose(ctx context.Context, ch <-chan *amqp.Error) {
+func (c *channel) handleClose(ctx context.Context, ch <-chan *amqp.Error) {
 	err := <-ch
 	if err == nil {
 		return
@@ -153,14 +151,14 @@ func (c *Channel) handleClose(ctx context.Context, ch <-chan *amqp.Error) {
 
 	c.logger.Warn("Channel closed with error.", err)
 
-	if connErr := c.Connect(ctx); connErr != nil {
+	if connErr := c.connect(ctx); connErr != nil {
 		c.logger.Warn("Channel connection error.", connErr)
 	}
 
 	c.logger.Debug("Close handled.", err)
 }
 
-func (c *Channel) handleFlow(_ context.Context, ch <-chan bool) {
+func (c *channel) handleFlow(_ context.Context, ch <-chan bool) {
 	for flow := range ch {
 		c.logger.Debug("Flow handled.", flow)
 	}
@@ -168,7 +166,7 @@ func (c *Channel) handleFlow(_ context.Context, ch <-chan bool) {
 	c.logger.Debug("Flow handler stopped.")
 }
 
-func (c *Channel) handlePublish(_ context.Context, ch <-chan amqp.Confirmation) {
+func (c *channel) handlePublish(_ context.Context, ch <-chan amqp.Confirmation) {
 	for pub := range ch {
 		c.logger.Debug("Publish handled.", pub)
 	}
@@ -176,7 +174,7 @@ func (c *Channel) handlePublish(_ context.Context, ch <-chan amqp.Confirmation) 
 	c.logger.Debug("Publish handler stopped.")
 }
 
-func (c *Channel) handleReturn(_ context.Context, ch <-chan amqp.Return) {
+func (c *channel) handleReturn(_ context.Context, ch <-chan amqp.Return) {
 	for ret := range ch {
 		c.logger.Debug("Return handled.", ret)
 	}

@@ -1,36 +1,34 @@
-package transport
+package wrapbit
 
 import (
 	"errors"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/vkhonin/wrapbit/utils"
 	"sync"
 )
 
-type Connection struct {
-	ChRetry utils.Retry
-	Logger  utils.Logger
-	Retry   utils.Retry
-	URIs    []string
-
-	BlockCond *sync.Cond
+type connection struct {
+	blockCond *sync.Cond
 	blocked   bool
+	chRetry   Retry
 	connMu    sync.RWMutex
 	conn      *amqp.Connection
+	logger    Logger
+	retry     Retry
+	uris      []string
 }
 
-func (c *Connection) Connect() error {
+func (c *connection) connect() error {
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
 
-	c.Logger.Debug("Setting up connection.")
+	c.logger.Debug("Setting up connection.")
 
 	if err := c.dial(); err != nil {
 		return fmt.Errorf("establish connection: %w", err)
 	}
 
-	c.Logger.Debug("Setting up connection notifications.")
+	c.logger.Debug("Setting up connection notifications.")
 
 	var (
 		blockCh <-chan amqp.Blocking = c.conn.NotifyBlocked(make(chan amqp.Blocking, 1))
@@ -40,57 +38,57 @@ func (c *Connection) Connect() error {
 	go c.handleBlock(blockCh)
 	go c.handleClose(closeCh)
 
-	c.Logger.Debug("Connection set up.")
+	c.logger.Debug("Connection set up.")
 
 	return nil
 }
 
-func (c *Connection) Disconnect() error {
+func (c *connection) disconnect() error {
 	c.connMu.RLock()
 	defer c.connMu.RUnlock()
 
 	if c.conn == nil {
-		c.Logger.Debug("Not connected.")
+		c.logger.Debug("Not connected.")
 
 		return nil
 	}
 
-	c.Logger.Debug("Disconnecting.")
+	c.logger.Debug("Disconnecting.")
 
 	if err := c.conn.Close(); err != nil {
 		return fmt.Errorf("close connection: %w", err)
 	}
 
-	c.Logger.Debug("Disconnected.")
+	c.logger.Debug("Disconnected.")
 
 	return nil
 }
 
-func (c *Connection) NewChannel() *Channel {
-	return &Channel{
+func (c *connection) newChannel() *channel {
+	return &channel{
 		chMu:   new(sync.RWMutex),
 		conn:   c,
-		logger: c.Logger,
-		retry:  c.ChRetry,
+		logger: c.logger,
+		retry:  c.chRetry,
 	}
 }
 
-func (c *Connection) block(value bool) {
-	c.BlockCond.L.Lock()
+func (c *connection) block(value bool) {
+	c.blockCond.L.Lock()
 	c.blocked = value
-	c.BlockCond.L.Unlock()
-	c.BlockCond.Broadcast()
+	c.blockCond.L.Unlock()
+	c.blockCond.Broadcast()
 }
 
-func (c *Connection) channel() (*amqp.Channel, error) {
+func (c *connection) channel() (*amqp.Channel, error) {
 	c.connMu.RLock()
 	defer c.connMu.RUnlock()
 	return c.conn.Channel()
 }
 
 // dial tries to establish connection to server using [Connection.Retry] strategy.
-func (c *Connection) dial() error {
-	if len(c.URIs) == 0 {
+func (c *connection) dial() error {
+	if len(c.uris) == 0 {
 		return errors.New("no URIs to connect")
 	}
 
@@ -100,9 +98,9 @@ func (c *Connection) dial() error {
 		errs []error
 	)
 
-	for a := c.Retry(); a.Attempt(); {
-		for _, uri := range c.URIs {
-			c.Logger.Debug("Dialing.", uri)
+	for a := c.retry(); a.Attempt(); {
+		for _, uri := range c.uris {
+			c.logger.Debug("Dialing.", uri)
 
 			conn, err = amqp.Dial(uri)
 
@@ -112,7 +110,7 @@ func (c *Connection) dial() error {
 				return nil
 			}
 
-			c.Logger.Warn("Dial error.", uri, err)
+			c.logger.Warn("Dial error.", uri, err)
 
 			errs = append(errs, err)
 		}
@@ -121,20 +119,20 @@ func (c *Connection) dial() error {
 	return errors.Join(errs...)
 }
 
-func (c *Connection) handleBlock(blockCh <-chan amqp.Blocking) {
+func (c *connection) handleBlock(blockCh <-chan amqp.Blocking) {
 	c.block(false)
 
 	for blocking := range blockCh {
-		c.Logger.Warn("Connection (un)block.", blocking)
+		c.logger.Warn("Connection (un)block.", blocking)
 		c.block(blocking.Active)
 	}
 }
 
-func (c *Connection) handleClose(closeCh <-chan *amqp.Error) {
+func (c *connection) handleClose(closeCh <-chan *amqp.Error) {
 	// TODO: This will run once on non graceful connection close. If c.connect() fails and returns error, it will
 	// not be known and everything will hang forever (until manual c.Start()). So this should be handled properly.
 	if err := <-closeCh; err != nil {
-		c.Logger.Warn("Connection closed.", err)
-		_ = c.Connect()
+		c.logger.Warn("Connection closed.", err)
+		_ = c.connect()
 	}
 }
